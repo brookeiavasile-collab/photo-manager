@@ -71,6 +71,7 @@ function Home() {
   const [tagsExpanded, setTagsExpanded] = useState(false)
   const refreshGuardRef = useRef(false)
   const lastScrollYRef = useRef(0)
+  const showScrollTopRef = useRef(false)
   const tagsExpandGuardUntilRef = useRef(0)
   const viewedItemKeyRef = useRef('')
   
@@ -100,26 +101,40 @@ function Home() {
   }, [])
 
   useEffect(() => {
+    let rafId = 0
+
     const handleScroll = () => {
-      const currentScrollY = window.scrollY
-      setShowScrollTop(currentScrollY > 480)
+      if (rafId) return
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0
+        const currentScrollY = window.scrollY
+        const shouldShow = currentScrollY > 480
 
-      if (
-        tagsExpanded &&
-        Date.now() > tagsExpandGuardUntilRef.current &&
-        currentScrollY > 220 &&
-        currentScrollY > lastScrollYRef.current
-      ) {
-        setTagsExpanded(false)
-      }
+        if (showScrollTopRef.current !== shouldShow) {
+          showScrollTopRef.current = shouldShow
+          setShowScrollTop(shouldShow)
+        }
 
-      lastScrollYRef.current = currentScrollY
+        if (
+          tagsExpanded &&
+          Date.now() > tagsExpandGuardUntilRef.current &&
+          currentScrollY > 220 &&
+          currentScrollY > lastScrollYRef.current
+        ) {
+          setTagsExpanded(false)
+        }
+
+        lastScrollYRef.current = currentScrollY
+      })
     }
 
     window.addEventListener('scroll', handleScroll, { passive: true })
     handleScroll()
 
-    return () => window.removeEventListener('scroll', handleScroll)
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      if (rafId) window.cancelAnimationFrame(rafId)
+    }
   }, [tagsExpanded])
 
   useEffect(() => {

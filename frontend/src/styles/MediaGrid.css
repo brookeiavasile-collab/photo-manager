@@ -11,6 +11,8 @@
   cursor: pointer;
   transition: all 0.2s;
   box-shadow: var(--shadow);
+  content-visibility: auto;
+  contain-intrinsic-size: 320px 360px;
 }
 
 .media-card:hover {
