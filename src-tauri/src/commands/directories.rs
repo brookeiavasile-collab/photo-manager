@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::atomic::AtomicUsize;
 use tauri::{State, AppHandle, Emitter};
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 use crate::store::data_store::DataStore;
 use crate::store::cache_store::CacheStore;
 use crate::scanner::photo_scanner::PhotoScanner;
@@ -303,11 +304,10 @@ pub async fn scan_directory(
         move || scan_cancelled.load(Ordering::Relaxed)
     };
 
-    let existing_photos = store.get_photos().await;
     let mut existing_photo_map: HashMap<String, crate::models::Photo> = HashMap::new();
-    for p in &existing_photos {
+    for p in store.get_photos().await {
         if p.path.starts_with(&path) {
-            existing_photo_map.insert(p.path.clone(), p.clone());
+            existing_photo_map.insert(p.path.clone(), p);
         }
     }
 
@@ -322,8 +322,11 @@ pub async fn scan_directory(
         .build()
         .map_err(|e| format!("failed to build scan thread pool: {e}"))?;
 
-    let photo_files = scanner.list_files(&dir_path);
-    let photo_total = photo_files.len();
+    let photo_total = WalkDir::new(&dir_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() && scanner.is_supported(e.path()))
+        .count();
     {
         let mut state = scan_state.lock().unwrap();
         state.total_count = photo_total;
@@ -365,16 +368,26 @@ pub async fn scan_directory(
     };
 
     const PHOTO_BATCH: usize = 120;
-    const PHOTO_COMMIT_EVERY: usize = 3;
-    let mut photo_batches = 0usize;
-    for chunk in photo_files.chunks(PHOTO_BATCH) {
+    let mut buf: Vec<PathBuf> = Vec::with_capacity(PHOTO_BATCH);
+    for entry in WalkDir::new(&dir_path).into_iter().filter_map(|e| e.ok()) {
         if should_stop() {
             break;
+        }
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        if !scanner.is_supported(p) {
+            continue;
+        }
+        buf.push(entry.into_path());
+        if buf.len() < PHOTO_BATCH {
+            continue;
         }
 
         let batch = scanner.scan_files_batch_in_pool(
             &pool,
-            chunk,
+            &buf,
             &store,
             &cache,
             &existing_photo_map,
@@ -385,20 +398,32 @@ pub async fn scan_directory(
             &on_progress,
         );
 
+        buf.clear();
+
         for p in batch {
             existing_photo_map.insert(p.path.clone(), p);
         }
+    }
 
-        photo_batches += 1;
-        if photo_batches % PHOTO_COMMIT_EVERY == 0 {
-            // 分批把当前目录的照片写入内存，让目录数量能实时变化
-            let photos_in_dir: Vec<crate::models::Photo> = existing_photo_map.values().cloned().collect();
-            store.replace_photos_in_dir(&path, photos_in_dir, false).await;
+    if !buf.is_empty() && !should_stop() {
+        let batch = scanner.scan_files_batch_in_pool(
+            &pool,
+            &buf,
+            &store,
+            &cache,
+            &existing_photo_map,
+            force,
+            &should_stop,
+            &counter,
+            photo_total,
+            &on_progress,
+        );
+        for p in batch {
+            existing_photo_map.insert(p.path.clone(), p);
         }
     }
 
-    // 照片阶段结束（或被停止）后，落盘一次
-    let photos_in_dir: Vec<crate::models::Photo> = existing_photo_map.values().cloned().collect();
+    let photos_in_dir: Vec<crate::models::Photo> = existing_photo_map.into_values().collect();
     store.replace_photos_in_dir(&path, photos_in_dir, true).await;
 
     if scan_cancelled.load(Ordering::Relaxed) {
@@ -432,29 +457,42 @@ pub async fn scan_directory(
         "stage": "scanning_videos"
     }));
     
-    let existing_videos = store.get_videos().await;
     let mut existing_video_map: HashMap<String, crate::models::Video> = HashMap::new();
-    for v in &existing_videos {
+    for v in store.get_videos().await {
         if v.path.starts_with(&path) {
-            existing_video_map.insert(v.path.clone(), v.clone());
+            existing_video_map.insert(v.path.clone(), v);
         }
     }
 
-    let video_files = video_scanner.list_files(&dir_path);
-    let video_total = video_files.len();
+    let video_total = WalkDir::new(&dir_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() && video_scanner.is_video(e.path()))
+        .count();
     let video_counter = AtomicUsize::new(0);
 
     const VIDEO_BATCH: usize = 16;
-    const VIDEO_COMMIT_EVERY: usize = 2;
-    let mut video_batches = 0usize;
-    for chunk in video_files.chunks(VIDEO_BATCH) {
+    let mut vbuf: Vec<PathBuf> = Vec::with_capacity(VIDEO_BATCH);
+    for entry in WalkDir::new(&dir_path).into_iter().filter_map(|e| e.ok()) {
         if should_stop() {
             break;
+        }
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        if !video_scanner.is_video(p) {
+            continue;
+        }
+
+        vbuf.push(entry.into_path());
+        if vbuf.len() < VIDEO_BATCH {
+            continue;
         }
 
         let batch = video_scanner.scan_files_batch_in_pool(
             &pool,
-            chunk,
+            &vbuf,
             &store,
             &cache,
             &existing_video_map,
@@ -465,18 +503,32 @@ pub async fn scan_directory(
             &on_progress,
         );
 
+        vbuf.clear();
+
         for v in batch {
             existing_video_map.insert(v.path.clone(), v);
         }
+    }
 
-        video_batches += 1;
-        if video_batches % VIDEO_COMMIT_EVERY == 0 {
-            let videos_in_dir: Vec<crate::models::Video> = existing_video_map.values().cloned().collect();
-            store.replace_videos_in_dir(&path, videos_in_dir, false).await;
+    if !vbuf.is_empty() && !should_stop() {
+        let batch = video_scanner.scan_files_batch_in_pool(
+            &pool,
+            &vbuf,
+            &store,
+            &cache,
+            &existing_video_map,
+            force,
+            &should_stop,
+            &video_counter,
+            video_total,
+            &on_progress,
+        );
+        for v in batch {
+            existing_video_map.insert(v.path.clone(), v);
         }
     }
 
-    let videos_in_dir: Vec<crate::models::Video> = existing_video_map.values().cloned().collect();
+    let videos_in_dir: Vec<crate::models::Video> = existing_video_map.into_values().collect();
     store.replace_videos_in_dir(&path, videos_in_dir, true).await;
 
     if scan_cancelled.load(Ordering::Relaxed) {

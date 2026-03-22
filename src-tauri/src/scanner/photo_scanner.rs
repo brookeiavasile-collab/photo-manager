@@ -12,12 +12,15 @@ use crate::scanner::geocoder::Geocoder;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use rayon::ThreadPool;
+use tokio::sync::Semaphore;
+use std::sync::Arc;
 
 pub struct PhotoScanner {
     thumbnail_size: u32,
     supported_formats: Vec<String>,
     geocoder: Geocoder,
     concurrency: usize,
+    thumbnail_semaphore: Arc<Semaphore>,
 }
 
 impl PhotoScanner {
@@ -27,11 +30,13 @@ impl PhotoScanner {
         } else {
             scan_concurrency as usize
         };
+        let thumb_permits = std::cmp::min(2, c.max(1));
         Self { 
             thumbnail_size, 
             supported_formats,
             geocoder: Geocoder::new(),
             concurrency: c.max(1),
+            thumbnail_semaphore: Arc::new(Semaphore::new(thumb_permits)),
         }
     }
 
@@ -72,10 +77,12 @@ impl PhotoScanner {
             return Some(thumb_path.to_string_lossy().to_string());
         }
 
+        let permit = tauri::async_runtime::block_on(self.thumbnail_semaphore.acquire()).ok()?;
         let img = ImageReader::open(path).ok()?.decode().ok()?;
 
         let thumbnail = img.thumbnail(self.thumbnail_size, self.thumbnail_size);
         thumbnail.save(&thumb_path).ok()?;
+        drop(permit);
         Some(thumb_path.to_string_lossy().to_string())
     }
 
