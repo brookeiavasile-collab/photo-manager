@@ -213,10 +213,34 @@ await invoke('scan_directory', { path: '/Users/xxx/Pictures' })
 | `remove_directory` | `path` | `Vec<DirectoryInfo>` |
 | `browse` | `path?` | `BrowseResponse` |
 | `scan_directory` | `path, force?` | `ScanState` |
+| `get_media_page` | `params` | `MediaPageResponse` |
 | `get_config` | - | `Config` |
 | `update_config` | `config` | `Config` |
 | `get_cache_stats` | - | `CacheStats` |
 | `clear_cache` | `type?` | `CacheStats` |
+
+### 游标分页（大库优化）
+
+当媒体数量较大（10k+）时，为降低前端首屏卡顿与内存占用，桌面端使用游标分页加载媒体：
+
+- 后端命令：`get_media_page`
+- 返回：`items + nextCursor`（`nextCursor` 为空表示没有更多）
+- 游标稳定性：游标基于排序键（时间戳 + filename + id）编码，避免 offset 在数据变化时产生跳页/重复
+- 重复角标：后端在分页返回中直接写入 `duplicateCount`，确保分页模式下仍可展示重复统计
+
+前端通过 IntersectionObserver 触发加载更多，并对卡片网格启用窗口化渲染，避免一次性渲染全量 DOM。
+
+## 发布与分发
+
+### GitHub Actions 发布
+
+项目已配置 GitHub Actions 发布工作流（推送 `v*` tag 触发构建并生成 Draft Release）。
+
+产物：
+- macOS：universal `.app/.dmg`
+- Windows：`.msi`、`-setup.exe`，以及 portable 压缩包（包含主程序 exe 与必要运行库）
+
+注意：需要在 GitHub 仓库设置中启用工作流写权限（Read and write permissions），否则会出现 Release API 权限错误。
 
 ## 文件存储
 

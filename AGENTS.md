@@ -1,6 +1,6 @@
 # Photo Manager - Project Knowledge Base
 
-**Generated:** 2026-03-21
+**Generated:** 2026-03-22
 **Stack:** Tauri 2.0 (Rust) + React 18 + Vite
 
 ---
@@ -142,6 +142,7 @@ npx tauri build             # 或直接运行
 | `stop_scan` | commands/directories.rs | 停止扫描 |
 | `browse` | commands/directories.rs | 浏览目录结构 |
 | `get_media` | commands/media.rs | 获取所有媒体 |
+| `get_media_page` | commands/media.rs | 游标分页获取媒体 |
 | `get_config` | commands/config.rs | 获取配置 |
 | `update_config` | commands/config.rs | 更新配置 |
 | `get_cache_stats` | commands/cache.rs | 获取缓存统计 |
@@ -191,12 +192,40 @@ npx tauri build             # 或直接运行
 - **数据存储**: JSON 文件存储在应用同目录的 `data/` 文件夹
 - **缩略图**: 存储在应用同目录的 `thumbnails/` 文件夹
 - **Tauri invoke**: 前端使用同步 `import { invoke } from '@tauri-apps/api/core'`，不要用异步加载
+- **大库性能**: 前端 `MediaGrid` 支持窗口化渲染；Tauri 下首页支持游标分页加载，避免一次性拉全量数据
 
 ---
 
 ## CHANGELOG
 
 ### 2026-03-22
+
+**发布流水线**
+- GitHub Actions 通过推送 `v*` tag 触发 Release 构建（Draft）
+  - `.github/workflows/release.yml`
+- Windows 发布额外产出 portable 压缩包（非安装版）
+  - CI 内从 `src-tauri/target/release` 打包并上传 Release
+- 修复 macOS universal 构建缺少目标与图标问题
+  - Rust targets：`aarch64-apple-darwin` / `x86_64-apple-darwin`
+  - 图标：新增 `src-tauri/icons/icon.icns` 并配置到 `tauri.conf.json`
+
+**大库性能与加载策略**
+- 首页媒体加载新增游标分页 `get_media_page`
+  - 支持 type/year/aiTags 过滤与 dateTaken/createdAt 排序
+  - 返回 `items + nextCursor` 用于无限滚动加载更多
+  - `src-tauri/src/commands/media.rs`
+  - `frontend/src/pages/Home.jsx`
+  - `frontend/src/services/api.unified.js`
+- 分页模式下重复统计由后端提供 `duplicateCount`，确保角标可用
+  - `src-tauri/src/commands/media.rs`
+- 卡片列表优化：窗口化渲染 + 浏览器级跳过布局/绘制
+  - `frontend/src/components/MediaGrid.jsx`
+  - `frontend/src/styles/MediaGrid.css`
+
+**设置页展示**
+- 设置页照片/视频统计改为 SVG 图标展示
+  - `frontend/src/pages/Settings.jsx`
+  - `frontend/src/components/icons/AppIcons.jsx`
 
 **新增视频 GPS 提取和地址展示**
 - 扩展 Video 模型，添加 `exif` 和 `address` 字段

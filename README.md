@@ -12,6 +12,7 @@
 - MD5 去重识别重复媒体
 - 地理位置解析（GPS → 地址）
 - 回收站机制
+- 大库优化：窗口化渲染 + 游标分页加载（Tauri 桌面端）
 
 ## 技术栈
 
@@ -70,6 +71,34 @@ npx tauri build
 
 - macOS: `.dmg` 文件
 - Windows: `.msi` 和 `.exe` 文件
+
+## 发布（GitHub Actions）
+
+项目已配置自动发布工作流：[release.yml](file:///Users/kit/projects/photo-manager/.github/workflows/release.yml)。
+
+### 1. 仓库权限设置（必须）
+
+首次使用前请在 GitHub 仓库中启用工作流写权限，否则会出现 `Resource not accessible by integration`：
+
+- Settings → Actions → General → Workflow permissions → 选择 **Read and write permissions** → Save
+
+### 2. 触发发布
+
+推送 `v*` 形式的 tag 即会触发构建与发布（产出为 Draft Release）：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+构建完成后，到 GitHub Releases 下载对应平台产物。
+
+### 3. Windows portable（绿色版）
+
+Release 工作流在 Windows 构建后会额外生成 portable 压缩包并上传到 Release：
+
+- `PhotoManager_<tag>_windows_portable.zip`
+- 包内包含主程序 `.exe`，以及（若存在）`WebView2Loader.dll`
 
 ## 数据存储
 
