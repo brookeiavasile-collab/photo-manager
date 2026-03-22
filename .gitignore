@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment
+.env
+.env.local
+
+# Data
+data/*.json
+!data/.gitkeep
+thumbnails/*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build
+dist/
+build/
+# Rust
+target/
+src-tauri/target/
+**/*.rs.bk
+
+
+# Archives
+*.zip
+*.tar.gz
+

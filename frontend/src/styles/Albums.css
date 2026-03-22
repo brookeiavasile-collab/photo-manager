@@ -1,0 +1,109 @@
+.albums-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.albums-page .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.create-album-form {
+  background: var(--card-background);
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  margin-bottom: 32px;
+}
+
+.create-album-form h3 {
+  margin-bottom: 16px;
+  color: var(--text-primary);
+}
+
+.create-album-form input,
+.create-album-form textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.create-album-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.albums-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.album-card {
+  background: var(--card-background);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: transform 0.2s;
+}
+
+.album-card:hover {
+  transform: translateY(-4px);
+}
+
+.album-card a {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.album-preview {
+  aspect-ratio: 16/9;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.album-info {
+  padding: 16px;
+}
+
+.album-info h3 {
+  font-size: 18px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.album-info p {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.delete-album-btn {
+  width: 100%;
+  padding: 12px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border-color);
+  color: var(--danger-color);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.delete-album-btn:hover {
+  background: var(--background-color);
+}

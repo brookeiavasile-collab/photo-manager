@@ -1,0 +1,371 @@
+.home {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.page-header {
+  margin-bottom: 14px;
+}
+
+.page-header h1 {
+  font-size: 28px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.page-header p {
+  color: var(--text-secondary);
+}
+
+.page-header-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-panel {
+  background: var(--card-background);
+  padding: 12px 18px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+  position: sticky;
+  top: 10px;
+  z-index: 20;
+  border: 1px solid var(--border-color);
+  backdrop-filter: blur(10px);
+}
+
+.filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.filter-row + .filter-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-top-right {
+  margin-left: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.filter-summary {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--background-color);
+}
+
+.top-summary {
+  margin-left: 0;
+}
+
+.filter-summary-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.filter-summary-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.filter-summary-detail.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summary-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.summary-icon {
+  display: block;
+}
+
+.summary-divider {
+  opacity: 0.5;
+}
+
+.filter-group label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tags-group {
+  align-items: flex-start;
+  width: 100%;
+}
+
+.tags-group.vertical {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tags-group-label {
+  margin-bottom: 0;
+}
+
+.tags-group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tags-toggle-btn {
+  border: 1px solid var(--border-color);
+  background: var(--card-background);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tags-toggle-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.selected-tags-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.selected-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--primary-color);
+  border-radius: 6px;
+  background: var(--primary-color);
+  color: white;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.selected-tag-chip:hover {
+  filter: brightness(0.96);
+}
+
+.selected-tag-remove {
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.tags-group .filter-buttons {
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  align-content: flex-start;
+}
+
+.tags-group .filter-buttons.collapsed {
+  max-height: 38px;
+}
+
+.tags-group .filter-buttons.expanded {
+  max-height: 116px;
+}
+
+.tags-group .filter-buttons::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tags-group .filter-buttons::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 999px;
+}
+
+.filter-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--card-background);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.filter-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.filter-btn.active {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: white;
+}
+
+.filter-btn.with-icon {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-type-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filter-type-icon {
+  display: block;
+}
+
+.year-section {
+  flex: 1;
+  min-width: 300px;
+}
+
+.year-section label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  display: block;
+}
+
+.year-scroll {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sort-group {
+  margin-left: 0;
+}
+
+.sort-options {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sort-order-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--card-background);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sort-order-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.year-section {
+  flex: 1;
+}
+
+.year-section .filter-buttons {
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.loading, .no-photos {
+  text-align: center;
+  padding: 64px;
+  color: var(--text-secondary);
+}
+
+.scroll-top-btn {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.78);
+  color: white;
+  font-size: 20px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(10px);
+  z-index: 50;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.scroll-top-btn:hover {
+  background: rgba(15, 23, 42, 0.92);
+  transform: translateY(-2px);
+}
+
+@media (max-width: 900px) {
+  .search-panel {
+    top: 8px;
+  }
+
+  .filter-summary {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .filter-top-right {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .scroll-top-btn {
+    right: 16px;
+    bottom: 16px;
+  }
+}
