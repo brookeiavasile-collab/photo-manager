@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { mediaService, photoService, videoService } from '../services/api'
+import { isTauriApp, mediaService, photoService, videoService } from '../services/api'
 import scanService from '../services/scanService'
 import MediaGrid from '../components/MediaGrid'
 import PhotoModal from '../components/PhotoModal'
@@ -65,6 +65,10 @@ const normalizeMediaItem = (raw) => {
 function Home() {
   const [media, setMedia] = useState([])
   const [loading, setLoading] = useState(true)
+  const [pagingEnabled, setPagingEnabled] = useState(isTauriApp)
+  const [nextCursor, setNextCursor] = useState(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [selectedItem, setSelectedItem] = useState(null)
   const [duplicateItem, setDuplicateItem] = useState(null)
   const [showScrollTop, setShowScrollTop] = useState(false)
@@ -74,6 +78,10 @@ function Home() {
   const showScrollTopRef = useRef(false)
   const tagsExpandGuardUntilRef = useRef(0)
   const viewedItemKeyRef = useRef('')
+  const loadMoreSentinelRef = useRef(null)
+  const loadingMoreRef = useRef(false)
+  const hasMoreRef = useRef(false)
+  const nextCursorRef = useRef(null)
   
   const savedFilters = useMemo(() => loadFilters(), [])
   const [year, setYear] = useState(savedFilters.year ?? (savedFilters.years?.[0] ?? null))
@@ -177,6 +185,18 @@ function Home() {
   }, [selectedItem?.id, selectedItem?.mediaType])
 
   const loadMedia = async () => {
+    if (pagingEnabled) {
+      setLoading(true)
+      setMedia([])
+      setNextCursor(null)
+      setHasMore(false)
+      hasMoreRef.current = false
+      nextCursorRef.current = null
+      await loadMorePage({ reset: true })
+      setLoading(false)
+      return
+    }
+
     try {
       const data = await mediaService.getAll('all', sortBy, sortOrder)
       const normalized = Array.isArray(data) ? data.map(normalizeMediaItem) : []
@@ -253,6 +273,71 @@ function Home() {
     }
   }
 
+  const getPageRequestType = () => {
+    if (selectedAiTags.length > 0) return 'photo'
+    const types = mediaTypes || ['photo', 'video']
+    if (types.length === 1) return types[0]
+    return 'all'
+  }
+
+  const getPageSortBy = () => {
+    if (sortBy === 'createdAt') return 'createdAt'
+    return 'dateTaken'
+  }
+
+  const loadMorePage = async ({ reset = false } = {}) => {
+    if (!pagingEnabled) return
+    if (loadingMoreRef.current) return
+    if (!reset && !hasMoreRef.current) return
+
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+
+    try {
+      const res = await mediaService.getPage({
+        type: getPageRequestType(),
+        sortBy: getPageSortBy(),
+        sortOrder: sortOrder || 'desc',
+        year: year || null,
+        aiTags: selectedAiTags || [],
+        cursor: reset ? null : nextCursorRef.current,
+        limit: 2000,
+      })
+
+      const items = Array.isArray(res?.items) ? res.items : []
+      const normalized = items.map(normalizeMediaItem)
+      const cursor = res?.nextCursor || null
+      const more = Boolean(cursor)
+
+      nextCursorRef.current = cursor
+      hasMoreRef.current = more
+      setNextCursor(cursor)
+      setHasMore(more)
+
+      setMedia(prev => {
+        if (reset) return normalized
+        if (normalized.length === 0) return prev
+        const seen = new Set(prev.map(it => `${it.mediaType}:${it.id}`))
+        const merged = prev.slice()
+        for (const it of normalized) {
+          const key = `${it.mediaType}:${it.id}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            merged.push(it)
+          }
+        }
+        return merged
+      })
+    } catch (error) {
+      console.error('Failed to load media page:', error)
+      setHasMore(false)
+      hasMoreRef.current = false
+    } finally {
+      setLoadingMore(false)
+      loadingMoreRef.current = false
+    }
+  }
+
   const availableYears = useMemo(() => {
     const years = new Set()
     media.forEach(item => {
@@ -265,6 +350,7 @@ function Home() {
   }, [media])
 
   const baseFilteredMedia = useMemo(() => {
+    if (pagingEnabled) return media
     let result = media
     const types = mediaTypes || ['photo', 'video']
 
@@ -283,6 +369,7 @@ function Home() {
   }, [media, year, mediaTypes])
 
   const filteredMedia = useMemo(() => {
+    if (pagingEnabled) return media
     let result = baseFilteredMedia
 
     if (selectedAiTags.length > 0) {
@@ -366,6 +453,7 @@ function Home() {
   }, [baseFilteredMedia, selectedAiTags, sortBy, sortOrder])
 
   const availableAiTags = useMemo(() => {
+    if (pagingEnabled) return []
     const tagCounts = new Map()
 
     filteredMedia
@@ -390,6 +478,28 @@ function Home() {
         count: tagCounts.get(tag) || 0
       }))
   }, [filteredMedia, selectedAiTags])
+
+  useEffect(() => {
+    if (!pagingEnabled) return
+    loadMedia()
+  }, [pagingEnabled, year, sortBy, sortOrder, mediaTypes, selectedAiTags])
+
+  useEffect(() => {
+    if (!pagingEnabled) return
+    const el = loadMoreSentinelRef.current
+    if (!el) return
+
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      if (entry.isIntersecting) {
+        loadMorePage()
+      }
+    }, { root: null, rootMargin: '1200px 0px 1200px 0px', threshold: 0.01 })
+
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [pagingEnabled])
 
   const handlePhotoUpdate = async (id, updates) => {
     try {
@@ -654,6 +764,20 @@ function Home() {
         onVideoDelete={handleVideoDelete}
         onDuplicateClick={handleDuplicateClick}
       />
+
+      {pagingEnabled && (
+        <div
+          ref={loadMoreSentinelRef}
+          style={{ height: '1px' }}
+          aria-hidden="true"
+        />
+      )}
+
+      {pagingEnabled && loadingMore && (
+        <div className="loading" style={{ marginTop: 16 }}>
+          加载更多中...
+        </div>
+      )}
 
       {selectedItem && selectedItem.mediaType === 'photo' && (
         <PhotoModal

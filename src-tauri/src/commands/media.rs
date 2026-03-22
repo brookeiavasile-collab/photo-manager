@@ -4,6 +4,8 @@ use tauri::State;
 use serde::{Deserialize, Serialize};
 use crate::store::data_store::DataStore;
 use crate::models::{Photo, Video};
+use chrono::{DateTime, Datelike, TimeZone};
+use base64::Engine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Media {
@@ -60,4 +62,262 @@ pub async fn get_media(store: State<'_, Arc<DataStore>>) -> Result<Vec<serde_jso
     });
     
     Ok(media)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaPageRequest {
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub sort_by: String,
+    #[serde(default)]
+    pub sort_order: String,
+    pub year: Option<i32>,
+    #[serde(default)]
+    pub ai_tags: Vec<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaPageResponse {
+    pub items: Vec<serde_json::Value>,
+    pub next_cursor: Option<String>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorPayload {
+    ts: i64,
+    filename: String,
+    id: String,
+}
+
+#[derive(Debug, Clone)]
+struct SortKey {
+    ts: i64,
+    filename: String,
+    id: String,
+}
+
+fn parse_ts(value: &str) -> i64 {
+    if value.trim().is_empty() {
+        return 0;
+    }
+    DateTime::parse_from_rfc3339(value)
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0)
+}
+
+fn cmp_i64(a: i64, b: i64, dir: i32) -> std::cmp::Ordering {
+    if dir >= 0 {
+        a.cmp(&b)
+    } else {
+        b.cmp(&a)
+    }
+}
+
+fn cmp_str(a: &str, b: &str, dir: i32) -> std::cmp::Ordering {
+    if dir >= 0 {
+        a.cmp(b)
+    } else {
+        b.cmp(a)
+    }
+}
+
+fn cmp_key(a: &SortKey, b: &SortKey, dir: i32) -> std::cmp::Ordering {
+    let cmp = cmp_i64(a.ts, b.ts, dir);
+    if cmp != std::cmp::Ordering::Equal {
+        return cmp;
+    }
+    let cmp = cmp_str(&a.filename, &b.filename, dir);
+    if cmp != std::cmp::Ordering::Equal {
+        return cmp;
+    }
+    cmp_str(&a.id, &b.id, dir)
+}
+
+fn decode_cursor(cursor: &str) -> Option<CursorPayload> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cursor).ok()?;
+    serde_json::from_slice::<CursorPayload>(&bytes).ok()
+}
+
+fn encode_cursor(key: &SortKey) -> Option<String> {
+    let payload = CursorPayload {
+        ts: key.ts,
+        filename: key.filename.clone(),
+        id: key.id.clone(),
+    };
+    let json = serde_json::to_vec(&payload).ok()?;
+    Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json))
+}
+
+fn should_include_type(filter_type: &str, media_type: &str) -> bool {
+    match filter_type {
+        "photo" => media_type == "photo",
+        "video" => media_type == "video",
+        _ => true,
+    }
+}
+
+fn year_matches(ts: i64, year: i32) -> bool {
+    if ts <= 0 {
+        return false;
+    }
+    if let Some(dt) = chrono::Utc.timestamp_millis_opt(ts).single() {
+        dt.year() == year
+    } else {
+        false
+    }
+}
+
+fn ai_tags_match(item_tags: &[String], filter_tags: &[String]) -> bool {
+    if filter_tags.is_empty() {
+        return true;
+    }
+    let mut set = std::collections::HashSet::new();
+    for t in item_tags {
+        let normalized = t.trim().to_lowercase();
+        if !normalized.is_empty() {
+            set.insert(normalized);
+        }
+    }
+    filter_tags.iter().any(|t| set.contains(&t.trim().to_lowercase()))
+}
+
+#[tauri::command]
+pub async fn get_media_page(
+    store: State<'_, Arc<DataStore>>,
+    params: MediaPageRequest,
+) -> Result<MediaPageResponse, String> {
+    let filter_type = if params.r#type.trim().is_empty() { "all" } else { params.r#type.as_str() };
+    let sort_by = match params.sort_by.as_str() {
+        "createdAt" | "created_at" => "createdAt",
+        _ => "dateTaken",
+    };
+    let dir = if params.sort_order.as_str() == "asc" { 1 } else { -1 };
+    let limit = params.limit.unwrap_or(2000).clamp(1, 20000) as usize;
+
+    let cursor_payload = params.cursor.as_deref().and_then(decode_cursor);
+    let cursor_key = cursor_payload.as_ref().map(|c| SortKey {
+        ts: c.ts,
+        filename: c.filename.clone(),
+        id: c.id.clone(),
+    });
+
+    let photos = store.get_photos().await;
+    let videos = store.get_videos().await;
+
+    let mut entries: Vec<(SortKey, serde_json::Value)> = Vec::new();
+
+    for p in photos {
+        if p.deleted {
+            continue;
+        }
+        if !should_include_type(filter_type, "photo") {
+            continue;
+        }
+        if !ai_tags_match(&p.ai_tags, &params.ai_tags) {
+            continue;
+        }
+
+        let primary = if sort_by == "createdAt" {
+            p.created_at.as_str()
+        } else {
+            p.date_taken.as_deref().unwrap_or(p.created_at.as_str())
+        };
+        let ts = parse_ts(primary);
+        if let Some(y) = params.year {
+            if !year_matches(ts, y) {
+                continue;
+            }
+        }
+
+        let mut p = p;
+        if let Some(ref thumb) = p.thumbnail {
+            if !Path::new(thumb).exists() {
+                p.thumbnail = None;
+            }
+        }
+        let mut val = serde_json::to_value(&p).map_err(|e| e.to_string())?;
+        val["type"] = serde_json::json!("photo");
+
+        let key = SortKey {
+            ts,
+            filename: p.filename.clone(),
+            id: p.id.clone(),
+        };
+        entries.push((key, val));
+    }
+
+    for v in videos {
+        if v.deleted {
+            continue;
+        }
+        if !should_include_type(filter_type, "video") {
+            continue;
+        }
+        if !params.ai_tags.is_empty() {
+            continue;
+        }
+
+        let primary = if sort_by == "createdAt" {
+            v.created_at.as_str()
+        } else {
+            v.date_taken.as_deref().unwrap_or(v.created_at.as_str())
+        };
+        let ts = parse_ts(primary);
+        if let Some(y) = params.year {
+            if !year_matches(ts, y) {
+                continue;
+            }
+        }
+
+        let mut v = v;
+        if let Some(ref thumb) = v.thumbnail {
+            if !Path::new(thumb).exists() {
+                v.thumbnail = None;
+            }
+        }
+        let mut val = serde_json::to_value(&v).map_err(|e| e.to_string())?;
+        val["type"] = serde_json::json!("video");
+
+        let key = SortKey {
+            ts,
+            filename: v.filename.clone(),
+            id: v.id.clone(),
+        };
+        entries.push((key, val));
+    }
+
+    entries.sort_by(|(a, _), (b, _)| cmp_key(a, b, dir));
+
+    let total = entries.len();
+    let mut filtered: Vec<(SortKey, serde_json::Value)> = if let Some(cursor_key) = cursor_key.as_ref() {
+        entries
+            .into_iter()
+            .filter(|(k, _)| cmp_key(k, cursor_key, dir) == std::cmp::Ordering::Greater)
+            .collect()
+    } else {
+        entries
+    };
+
+    if filtered.len() > limit {
+        filtered.truncate(limit);
+    }
+
+    let next_cursor = filtered
+        .last()
+        .and_then(|(k, _)| encode_cursor(k));
+
+    let items = filtered.into_iter().map(|(_, v)| v).collect();
+
+    Ok(MediaPageResponse {
+        items,
+        next_cursor,
+        total,
+    })
 }

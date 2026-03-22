@@ -371,6 +371,20 @@ export const mediaService = {
       () => api.get(`/media?type=${type}&sortBy=${sortBy}&sortOrder=${sortOrder}`).then(r => r.data))
   },
 
+  async getPage({ type = 'all', sortBy = 'dateTaken', sortOrder = 'desc', year = null, aiTags = [], cursor = null, limit = 2000 } = {}) {
+    return callApi('get_media_page', {
+      params: {
+        type,
+        sortBy,
+        sortOrder,
+        year,
+        aiTags,
+        cursor,
+        limit,
+      }
+    })
+  },
+
   async getStats() {
     if (isTauri()) {
       const all = await callApi('get_media', {})

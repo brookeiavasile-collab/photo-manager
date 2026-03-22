@@ -63,6 +63,7 @@ pub fn run() {
             commands::directories::backfill_photo_addresses,
             commands::directories::get_address_backfill_state,
             commands::media::get_media,
+            commands::media::get_media_page,
             commands::config::get_config,
             commands::config::update_config,
             commands::cache::get_cache_stats,
