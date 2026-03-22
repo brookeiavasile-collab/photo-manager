@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react'
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react'
 import ConfirmModal from './ConfirmModal'
 import TrashIcon from './icons/TrashIcon'
 import { PlayIcon, ViewIcon } from './icons/AppIcons'
@@ -183,6 +183,10 @@ function MediaGrid({ items, onItemClick, onPhotoDelete, onVideoDelete, onDuplica
   const [deleting, setDeleting] = useState(false)
   const canDeletePhoto = typeof onPhotoDelete === 'function'
   const canDeleteVideo = typeof onVideoDelete === 'function'
+  const containerRef = useRef(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+  const [scrollY, setScrollY] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
 
   const handleDelete = (item, e) => {
     e.stopPropagation()
@@ -218,23 +222,152 @@ function MediaGrid({ items, onItemClick, onPhotoDelete, onVideoDelete, onDuplica
     return false
   }
 
+  const shouldVirtualize = items.length > 1200
+  const minCardWidth = 200
+  const gap = 16
+  const infoHeight = 104
+
+  useEffect(() => {
+    if (!shouldVirtualize) return
+    const el = containerRef.current
+    if (!el) return
+
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const width = Math.floor(entry.contentRect.width || 0)
+      setContainerWidth(width)
+    })
+
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [shouldVirtualize])
+
+  useEffect(() => {
+    if (!shouldVirtualize) return
+    let rafId = 0
+
+    const update = () => {
+      setScrollY(window.scrollY || 0)
+      setViewportHeight(window.innerHeight || 0)
+    }
+
+    const onScrollOrResize = () => {
+      if (rafId) return
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0
+        update()
+      })
+    }
+
+    update()
+    window.addEventListener('scroll', onScrollOrResize, { passive: true })
+    window.addEventListener('resize', onScrollOrResize)
+
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize)
+      window.removeEventListener('resize', onScrollOrResize)
+      if (rafId) window.cancelAnimationFrame(rafId)
+    }
+  }, [shouldVirtualize])
+
+  const grid = useMemo(() => {
+    if (!shouldVirtualize) return null
+    const width = containerWidth || (containerRef.current?.getBoundingClientRect().width || 0)
+    const safeWidth = Math.max(0, Math.floor(width))
+
+    const columns = Math.max(1, Math.floor((safeWidth + gap) / (minCardWidth + gap)))
+    const cardWidth = columns === 1
+      ? safeWidth
+      : Math.floor((safeWidth - gap * (columns - 1)) / columns)
+
+    const rowHeight = cardWidth + infoHeight
+    const totalRows = Math.ceil(items.length / columns)
+    const totalHeight = totalRows * rowHeight + Math.max(0, totalRows - 1) * gap
+
+    const containerTop = (() => {
+      const el = containerRef.current
+      if (!el) return 0
+      const rect = el.getBoundingClientRect()
+      return rect.top + (window.scrollY || 0)
+    })()
+
+    const viewTop = scrollY - containerTop
+    const overscanPx = viewportHeight * 2
+    const startY = Math.max(0, viewTop - overscanPx)
+    const endY = viewTop + viewportHeight + overscanPx
+
+    const rowStep = rowHeight + gap
+    const startRow = Math.max(0, Math.floor(startY / rowStep))
+    const endRow = Math.min(totalRows - 1, Math.ceil(endY / rowStep))
+
+    const startIndex = startRow * columns
+    const endIndex = Math.min(items.length, (endRow + 1) * columns)
+
+    return {
+      columns,
+      cardWidth,
+      rowHeight,
+      rowStep,
+      totalHeight,
+      startIndex,
+      endIndex,
+    }
+  }, [shouldVirtualize, containerWidth, items, scrollY, viewportHeight])
+
   return (
     <>
-      <div className="media-grid">
+      <div
+        className={`media-grid${shouldVirtualize ? ' virtual' : ''}`}
+        ref={containerRef}
+        style={shouldVirtualize && grid ? { height: `${grid.totalHeight}px` } : undefined}
+      >
         {items.length === 0 ? (
           <div className="no-media">
             <p>没有找到媒体文件</p>
           </div>
-        ) : items.map(item => (
-          <MediaCard
-            key={item.id}
-            item={item}
-            onItemClick={onItemClick}
-            onDuplicateClick={onDuplicateClick}
-            onRequestDelete={handleDelete}
-            canDelete={canDeleteItem(item)}
-          />
-        ))}
+        ) : shouldVirtualize && grid ? (
+          items.slice(grid.startIndex, grid.endIndex).map((item, visibleIndex) => {
+            const realIndex = grid.startIndex + visibleIndex
+            const row = Math.floor(realIndex / grid.columns)
+            const col = realIndex % grid.columns
+            const top = row * grid.rowStep
+            const left = col * (grid.cardWidth + gap)
+
+            return (
+              <div
+                key={item.id}
+                className="media-virtual-item"
+                style={{
+                  position: 'absolute',
+                  top: `${top}px`,
+                  left: `${left}px`,
+                  width: `${grid.cardWidth}px`,
+                  height: `${grid.rowHeight}px`,
+                }}
+              >
+                <MediaCard
+                  item={item}
+                  onItemClick={onItemClick}
+                  onDuplicateClick={onDuplicateClick}
+                  onRequestDelete={handleDelete}
+                  canDelete={canDeleteItem(item)}
+                />
+              </div>
+            )
+          })
+        ) : (
+          items.map(item => (
+            <MediaCard
+              key={item.id}
+              item={item}
+              onItemClick={onItemClick}
+              onDuplicateClick={onDuplicateClick}
+              onRequestDelete={handleDelete}
+              canDelete={canDeleteItem(item)}
+            />
+          ))
+        )}
       </div>
 
       {pendingDeleteItem && (

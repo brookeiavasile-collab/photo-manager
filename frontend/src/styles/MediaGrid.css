@@ -4,6 +4,20 @@
   gap: 16px;
 }
 
+.media-grid.virtual {
+  display: block;
+  position: relative;
+}
+
+.media-grid.virtual .media-card {
+  width: 100%;
+  height: 100%;
+}
+
+.media-grid.virtual .media-thumbnail {
+  height: auto;
+}
+
 .media-card {
   background: var(--card-background);
   border-radius: 12px;
