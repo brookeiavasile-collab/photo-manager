@@ -6,6 +6,7 @@ use crate::store::data_store::DataStore;
 use crate::models::{Photo, Video};
 use chrono::{DateTime, Datelike, TimeZone};
 use base64::Engine;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Media {
@@ -155,6 +156,100 @@ fn encode_cursor(key: &SortKey) -> Option<String> {
     Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json))
 }
 
+#[derive(Debug, Clone)]
+struct DuplicateState {
+    keeper_id: String,
+    duplicate_count: u32,
+}
+
+fn dup_key(ts: i64, filename: &str, id: &str) -> SortKey {
+    SortKey {
+        ts,
+        filename: filename.to_string(),
+        id: id.to_string(),
+    }
+}
+
+fn is_keeper_better(a: &SortKey, b: &SortKey) -> bool {
+    if a.ts != b.ts {
+        return a.ts < b.ts;
+    }
+    if a.filename != b.filename {
+        return a.filename < b.filename;
+    }
+    a.id < b.id
+}
+
+fn build_duplicates(photos: &[Photo], videos: &[Video]) -> HashMap<String, DuplicateState> {
+    let mut groups: HashMap<String, (u32, SortKey)> = HashMap::new(); // key -> (size, keeper_key)
+    let mut keeper_ids: HashMap<String, String> = HashMap::new(); // key -> keeper_id
+
+    for p in photos.iter() {
+        if p.deleted {
+            continue;
+        }
+        let md5 = match p.md5.as_deref() {
+            Some(v) if !v.trim().is_empty() => v.trim(),
+            _ => continue,
+        };
+        let ts = parse_ts(p.date_taken.as_deref().unwrap_or(p.created_at.as_str()));
+        let key = format!("photo:{}", md5);
+        let candidate = dup_key(ts, &p.filename, &p.id);
+
+        if let Some((size, keeper)) = groups.get_mut(&key) {
+            *size += 1;
+            if is_keeper_better(&candidate, keeper) {
+                *keeper = candidate.clone();
+                keeper_ids.insert(key.clone(), p.id.clone());
+            }
+        } else {
+            groups.insert(key.clone(), (1, candidate));
+            keeper_ids.insert(key.clone(), p.id.clone());
+        }
+    }
+
+    for v in videos.iter() {
+        if v.deleted {
+            continue;
+        }
+        let md5 = match v.md5.as_deref() {
+            Some(v) if !v.trim().is_empty() => v.trim(),
+            _ => continue,
+        };
+        let ts = parse_ts(v.date_taken.as_deref().unwrap_or(v.created_at.as_str()));
+        let key = format!("video:{}", md5);
+        let candidate = dup_key(ts, &v.filename, &v.id);
+
+        if let Some((size, keeper)) = groups.get_mut(&key) {
+            *size += 1;
+            if is_keeper_better(&candidate, keeper) {
+                *keeper = candidate.clone();
+                keeper_ids.insert(key.clone(), v.id.clone());
+            }
+        } else {
+            groups.insert(key.clone(), (1, candidate));
+            keeper_ids.insert(key.clone(), v.id.clone());
+        }
+    }
+
+    let mut result: HashMap<String, DuplicateState> = HashMap::new();
+    for (key, (size, _)) in groups.into_iter() {
+        if size <= 1 {
+            continue;
+        }
+        if let Some(keeper_id) = keeper_ids.get(&key) {
+            result.insert(
+                key,
+                DuplicateState {
+                    keeper_id: keeper_id.clone(),
+                    duplicate_count: size - 1,
+                },
+            );
+        }
+    }
+    result
+}
+
 fn should_include_type(filter_type: &str, media_type: &str) -> bool {
     match filter_type {
         "photo" => media_type == "photo",
@@ -210,6 +305,7 @@ pub async fn get_media_page(
 
     let photos = store.get_photos().await;
     let videos = store.get_videos().await;
+    let duplicates = build_duplicates(&photos, &videos);
 
     let mut entries: Vec<(SortKey, serde_json::Value)> = Vec::new();
 
@@ -244,6 +340,17 @@ pub async fn get_media_page(
         }
         let mut val = serde_json::to_value(&p).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("photo");
+        if let Some(ref md5) = p.md5 {
+            let key = format!("photo:{}", md5.trim());
+            if let Some(state) = duplicates.get(&key) {
+                let show = if state.keeper_id == p.id { state.duplicate_count } else { 0 };
+                val["duplicateCount"] = serde_json::json!(show);
+            } else {
+                val["duplicateCount"] = serde_json::json!(0);
+            }
+        } else {
+            val["duplicateCount"] = serde_json::json!(0);
+        }
 
         let key = SortKey {
             ts,
@@ -284,6 +391,17 @@ pub async fn get_media_page(
         }
         let mut val = serde_json::to_value(&v).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("video");
+        if let Some(ref md5) = v.md5 {
+            let key = format!("video:{}", md5.trim());
+            if let Some(state) = duplicates.get(&key) {
+                let show = if state.keeper_id == v.id { state.duplicate_count } else { 0 };
+                val["duplicateCount"] = serde_json::json!(show);
+            } else {
+                val["duplicateCount"] = serde_json::json!(0);
+            }
+        } else {
+            val["duplicateCount"] = serde_json::json!(0);
+        }
 
         let key = SortKey {
             ts,
