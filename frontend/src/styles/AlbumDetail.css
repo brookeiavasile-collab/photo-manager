@@ -1,0 +1,55 @@
+.album-detail {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.album-header {
+  background: var(--card-background);
+  padding: 32px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  margin-bottom: 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.album-header-info h1 {
+  font-size: 28px;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.album-header-info p {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.photo-count {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.edit-form {
+  flex: 1;
+}
+
+.edit-form input,
+.edit-form textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+
+.edit-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 12px;
+}

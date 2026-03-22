@@ -1,0 +1,101 @@
+.confirm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1200;
+}
+
+.confirm-modal {
+  width: min(420px, 100%);
+  background: var(--card-background);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+}
+
+.confirm-modal-header {
+  padding: 18px 22px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.confirm-modal-body {
+  padding: 14px 22px 20px;
+}
+
+.confirm-modal-body p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.confirm-modal-details {
+  margin-top: 10px !important;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--background-color);
+  color: var(--text-primary) !important;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 22px 22px;
+}
+
+.confirm-btn {
+  min-width: 112px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--card-background);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.confirm-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.confirm-btn.secondary:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+}
+
+.confirm-btn.danger {
+  border-color: rgba(239, 68, 68, 0.24);
+  background: var(--danger-color);
+  color: white;
+}
+
+.confirm-btn.danger:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.confirm-btn.primary {
+  border-color: rgba(37, 99, 235, 0.24);
+  background: var(--primary-color);
+  color: white;
+}
+
+.confirm-btn.primary:hover:not(:disabled) {
+  filter: brightness(0.98);
+}
+
+.confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

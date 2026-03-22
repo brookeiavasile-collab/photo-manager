@@ -1,0 +1,16 @@
+{
+  "name": "photo-manager",
+  "version": "1.0.0",
+  "description": "Photo Manager - Local photo/video management with Tauri",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
