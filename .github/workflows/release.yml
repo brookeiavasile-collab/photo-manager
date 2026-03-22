@@ -48,15 +48,32 @@ jobs:
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
 
-      - name: Build Tauri app (Windows portable)
+      - name: Create Windows portable zip
         if: matrix.platform == 'windows-latest'
-        uses: tauri-apps/tauri-action@v0
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $srcDir = "src-tauri\target\release"
+          $portableDir = Join-Path $srcDir "portable"
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+
+          $exe = Get-ChildItem $srcDir -Filter "*.exe" | Where-Object { $_.Name -notlike "*setup*" } | Select-Object -First 1
+          if (-not $exe) { throw "未找到主程序 exe（src-tauri\\target\\release\\*.exe）" }
+          Copy-Item $exe.FullName (Join-Path $portableDir $exe.Name) -Force
+
+          $webview2 = Join-Path $srcDir "WebView2Loader.dll"
+          if (Test-Path $webview2) { Copy-Item $webview2 (Join-Path $portableDir "WebView2Loader.dll") -Force }
+
+          $zipDir = "src-tauri\target\release\bundle\portable"
+          New-Item -ItemType Directory -Force -Path $zipDir | Out-Null
+          $zipPath = Join-Path $zipDir ("PhotoManager_{0}_windows_portable.zip" -f $tag)
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipPath
+          "PORTABLE_ZIP=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload Windows portable to Release
+        if: matrix.platform == 'windows-latest'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'App ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
-          prerelease: false
-          args: --config src-tauri/tauri.windows.portable.conf.json
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "${{ env.PORTABLE_ZIP }}" --clobber
