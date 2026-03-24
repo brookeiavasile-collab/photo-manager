@@ -43,7 +43,7 @@ pub async fn get_video_stats(store: State<'_, Arc<DataStore>>) -> Result<VideoSt
             *md5_counts.entry(md5.clone()).or_insert(0) += 1;
         }
     }
-    let duplicates = md5_counts.values().filter(|&&c| c > 1).count();
+    let duplicates = md5_counts.values().filter(|&&c| c > 1).map(|&c| c - 1).sum();
     
     Ok(VideoStats { total, duplicates })
 }

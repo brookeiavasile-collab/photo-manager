@@ -69,6 +69,10 @@ function Home() {
   const [nextCursor, setNextCursor] = useState(null)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [globalStats, setGlobalStats] = useState({ photos: 0, videos: 0 })
+  const [filteredStats, setFilteredStats] = useState({ total: 0, photos: 0, videos: 0 })
+  const [availableYears, setAvailableYears] = useState([])
+  const [availableAiTags, setAvailableAiTags] = useState([])
   const [selectedItem, setSelectedItem] = useState(null)
   const [duplicateItem, setDuplicateItem] = useState(null)
   const [showScrollTop, setShowScrollTop] = useState(false)
@@ -90,7 +94,20 @@ function Home() {
   const [mediaTypes, setMediaTypes] = useState(savedFilters.mediaTypes || ['photo', 'video'])
   const [selectedAiTags, setSelectedAiTags] = useState(savedFilters.aiTags || [])
 
+  const fetchGlobalStats = async () => {
+    try {
+      const [pStats, vStats] = await Promise.all([
+        photoService.getStats(),
+        videoService.getStats()
+      ])
+      setGlobalStats({ photos: pStats.total || 0, videos: vStats.total || 0 })
+    } catch (err) {
+      console.error('Failed to fetch global stats:', err)
+    }
+  }
+
   useEffect(() => {
+    fetchGlobalStats()
     loadMedia()
   }, [])
 
@@ -266,6 +283,15 @@ function Home() {
       })
 
       setMedia(withDuplicates)
+      
+      const pCount = withDuplicates.filter(m => m.mediaType === 'photo').length
+      const vCount = withDuplicates.filter(m => m.mediaType === 'video').length
+      setFilteredStats({
+        total: withDuplicates.length,
+        photos: pCount,
+        videos: vCount
+      })
+      setGlobalStats({ photos: pCount, videos: vCount })
     } catch (error) {
       console.error('Failed to load media:', error)
     } finally {
@@ -280,11 +306,6 @@ function Home() {
     return 'all'
   }
 
-  const getPageSortBy = () => {
-    if (sortBy === 'createdAt') return 'createdAt'
-    return 'dateTaken'
-  }
-
   const loadMorePage = async ({ reset = false } = {}) => {
     if (!pagingEnabled) return
     if (loadingMoreRef.current) return
@@ -296,12 +317,12 @@ function Home() {
     try {
       const res = await mediaService.getPage({
         type: getPageRequestType(),
-        sortBy: getPageSortBy(),
+        sortBy,
         sortOrder: sortOrder || 'desc',
         year: year || null,
         aiTags: selectedAiTags || [],
         cursor: reset ? null : nextCursorRef.current,
-        limit: 2000,
+        limit: 2000
       })
 
       const items = Array.isArray(res?.items) ? res.items : []
@@ -313,6 +334,19 @@ function Home() {
       hasMoreRef.current = more
       setNextCursor(cursor)
       setHasMore(more)
+      
+      setFilteredStats({
+        total: res?.total || 0,
+        photos: res?.totalPhotos || res?.total_photos || 0,
+        videos: res?.totalVideos || res?.total_videos || 0
+      })
+      
+      if (res?.availableYears || res?.available_years) {
+        setAvailableYears(res?.availableYears || res?.available_years)
+      }
+      if (res?.availableAiTags || res?.available_ai_tags) {
+        setAvailableAiTags(res?.availableAiTags || res?.available_ai_tags)
+      }
 
       setMedia(prev => {
         if (reset) return normalized
@@ -338,7 +372,8 @@ function Home() {
     }
   }
 
-  const availableYears = useMemo(() => {
+  const computedAvailableYears = useMemo(() => {
+    if (pagingEnabled) return availableYears
     const years = new Set()
     media.forEach(item => {
       const itemDate = new Date(item.dateTaken || item.createdAt)
@@ -347,7 +382,7 @@ function Home() {
       }
     })
     return Array.from(years).sort((a, b) => b - a)
-  }, [media])
+  }, [media, pagingEnabled, availableYears])
 
   const baseFilteredMedia = useMemo(() => {
     if (pagingEnabled) return media
@@ -452,8 +487,14 @@ function Home() {
     })
   }, [baseFilteredMedia, selectedAiTags, sortBy, sortOrder])
 
-  const availableAiTags = useMemo(() => {
-    if (pagingEnabled) return []
+  const computedAvailableAiTags = useMemo(() => {
+    if (pagingEnabled) {
+      // 合并从后端获取的 tags 和当前选中的 tags（确保选中时不消失）
+      const backendTags = availableAiTags || []
+      const backendTagNames = new Set(backendTags.map(t => t.tag))
+      const extraTags = selectedAiTags.filter(t => !backendTagNames.has(t)).map(t => ({ tag: t, count: 0 }))
+      return [...backendTags, ...extraTags].sort((a, b) => a.tag.localeCompare(b.tag))
+    }
     const tagCounts = new Map()
 
     filteredMedia
@@ -477,7 +518,7 @@ function Home() {
         tag,
         count: tagCounts.get(tag) || 0
       }))
-  }, [filteredMedia, selectedAiTags])
+  }, [filteredMedia, selectedAiTags, pagingEnabled, availableAiTags])
 
   useEffect(() => {
     if (!pagingEnabled) return
@@ -513,6 +554,7 @@ function Home() {
   const handlePhotoDelete = async (id) => {
     try {
       await photoService.delete(id)
+      fetchGlobalStats()
       loadMedia()
       if (selectedItem?.id === id) {
         setSelectedItem(null)
@@ -526,6 +568,7 @@ function Home() {
   const handleVideoDelete = async (id) => {
     try {
       await videoService.delete(id)
+      fetchGlobalStats()
       loadMedia()
       if (selectedItem?.id === id) {
         setSelectedItem(null)
@@ -592,10 +635,10 @@ function Home() {
     { value: 'duplicateCount', label: '重复数' },
   ]
 
-  const photoCount = media.filter(m => m.mediaType === 'photo').length
-  const videoCount = media.filter(m => m.mediaType === 'video').length
-  const filteredPhotoCount = filteredMedia.filter(m => m.mediaType === 'photo').length
-  const filteredVideoCount = filteredMedia.filter(m => m.mediaType === 'video').length
+  const photoCount = globalStats.photos
+  const videoCount = globalStats.videos
+  const filteredPhotoCount = filteredStats.photos
+  const filteredVideoCount = filteredStats.videos
 
   if (loading) {
     return <div className="loading">加载中...</div>
@@ -663,7 +706,7 @@ function Home() {
 
             <div className="filter-summary top-summary" aria-live="polite">
               <span className="filter-summary-value">
-                共 {filteredMedia.length} 项
+                共 {filteredStats.total} 项
               </span>
               <span className="filter-summary-detail with-icon">
                 <span className="summary-metric">
@@ -691,7 +734,7 @@ function Home() {
               >
                 全部
               </button>
-              {availableYears.map(y => (
+              {computedAvailableYears.map(y => (
                 <button
                   key={y}
                   className={`filter-btn ${year === y ? 'active' : ''}`}
@@ -704,7 +747,7 @@ function Home() {
             </div>
           </div>
 
-          {availableAiTags.length > 0 && (
+          {computedAvailableAiTags.length > 0 && (
             <div className="filter-group tags-group vertical">
               <div className="tags-group-header">
                 <label className="tags-group-label">识别标签</label>
@@ -740,7 +783,7 @@ function Home() {
                 >
                   全部
                 </button>
-                {availableAiTags.map(tag => (
+                {computedAvailableAiTags.map(tag => (
                   <button
                     key={tag.tag}
                     className={`filter-btn ${selectedAiTags.includes(tag.tag) ? 'active' : ''}`}

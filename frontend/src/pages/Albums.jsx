@@ -92,7 +92,9 @@ function Albums() {
           <div key={album.id} className="album-card">
             <Link to={`/albums/${album.id}`}>
               <div className="album-preview">
-                <div className="album-photo-count">{album.photos.length} 张照片</div>
+                <div className="album-photo-count">
+                  {album.photos.length + (album.videos?.length || 0)} 项媒体
+                </div>
               </div>
               <div className="album-info">
                 <h3>{album.name}</h3>

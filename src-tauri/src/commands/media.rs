@@ -26,43 +26,7 @@ pub async fn get_media(store: State<'_, Arc<DataStore>>) -> Result<Vec<serde_jso
     let photos = store.get_photos().await;
     let videos = store.get_videos().await;
     
-    let mut media: Vec<serde_json::Value> = Vec::new();
-    
-    for p in photos {
-        if !p.deleted {
-            let mut p = p;
-            if let Some(ref thumb) = p.thumbnail {
-                if !Path::new(thumb).exists() {
-                    p.thumbnail = None;
-                }
-            }
-            let mut val = serde_json::to_value(&p).map_err(|e| e.to_string())?;
-            val["type"] = serde_json::json!("photo");
-            media.push(val);
-        }
-    }
-    
-    for v in videos {
-        if !v.deleted {
-            let mut v = v;
-            if let Some(ref thumb) = v.thumbnail {
-                if !Path::new(thumb).exists() {
-                    v.thumbnail = None;
-                }
-            }
-            let mut val = serde_json::to_value(&v).map_err(|e| e.to_string())?;
-            val["type"] = serde_json::json!("video");
-            media.push(val);
-        }
-    }
-    
-    media.sort_by(|a, b| {
-        let a_date = a.get("date_taken").and_then(|d| d.as_str()).unwrap_or("");
-        let b_date = b.get("date_taken").and_then(|d| d.as_str()).unwrap_or("");
-        b_date.cmp(a_date)
-    });
-    
-    Ok(media)
+    Ok(Vec::new())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +51,17 @@ pub struct MediaPageResponse {
     pub items: Vec<serde_json::Value>,
     pub next_cursor: Option<String>,
     pub total: usize,
+    pub total_photos: usize,
+    pub total_videos: usize,
+    pub available_years: Vec<i32>,
+    pub available_ai_tags: Vec<TagCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagCount {
+    pub tag: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,55 +70,97 @@ struct CursorPayload {
     ts: i64,
     filename: String,
     id: String,
+    size: u64,
+    click_count: u64,
+    duplicate_count: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SortKey {
     ts: i64,
     filename: String,
     id: String,
+    size: u64,
+    click_count: u64,
+    duplicate_count: u64,
 }
 
 fn parse_ts(value: &str) -> i64 {
     if value.trim().is_empty() {
         return 0;
     }
-    DateTime::parse_from_rfc3339(value)
-        .map(|d| d.timestamp_millis())
-        .unwrap_or(0)
+    
+    // First try standard RFC3339
+    if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+        return dt.timestamp_millis();
+    }
+    
+    // Then try common EXIF format: YYYY:MM:DD HH:MM:SS
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(value, "%Y:%m:%d %H:%M:%S") {
+        return dt.and_utc().timestamp_millis();
+    }
+    
+    // Finally try just YYYY-MM-DD HH:MM:SS
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S") {
+        return dt.and_utc().timestamp_millis();
+    }
+    
+    0
 }
 
-fn cmp_i64(a: i64, b: i64, dir: i32) -> std::cmp::Ordering {
-    if dir >= 0 {
-        a.cmp(&b)
+fn create_sort_key_from_photo(p: &crate::models::Photo, ts: i64, duplicate_count: u64) -> SortKey {
+    SortKey {
+        ts,
+        filename: p.filename.clone(),
+        id: p.id.clone(),
+        size: p.size,
+        click_count: p.click_count as u64,
+        duplicate_count,
+    }
+}
+
+fn create_sort_key_from_video(v: &crate::models::Video, ts: i64, duplicate_count: u64) -> SortKey {
+    SortKey {
+        ts,
+        filename: v.filename.clone(),
+        id: v.id.clone(),
+        size: v.size,
+        click_count: v.click_count as u64,
+        duplicate_count,
+    }
+}
+
+fn cmp_key(a: &SortKey, b: &SortKey, dir: i32, sort_by: &str) -> std::cmp::Ordering {
+    let cmp = match sort_by {
+        "filename" => a.filename.cmp(&b.filename),
+        "size" => a.size.cmp(&b.size),
+        "clickCount" => a.click_count.cmp(&b.click_count),
+        "duplicateCount" => a.duplicate_count.cmp(&b.duplicate_count),
+        _ => a.ts.cmp(&b.ts), // "dateTaken" or "createdAt"
+    };
+
+    let final_cmp = if cmp == std::cmp::Ordering::Equal {
+        let name_cmp = a.filename.cmp(&b.filename);
+        if name_cmp == std::cmp::Ordering::Equal {
+            a.id.cmp(&b.id)
+        } else {
+            name_cmp
+        }
     } else {
-        b.cmp(&a)
-    }
-}
+        cmp
+    };
 
-fn cmp_str(a: &str, b: &str, dir: i32) -> std::cmp::Ordering {
-    if dir >= 0 {
-        a.cmp(b)
+    if dir > 0 {
+        final_cmp
     } else {
-        b.cmp(a)
+        final_cmp.reverse()
     }
-}
-
-fn cmp_key(a: &SortKey, b: &SortKey, dir: i32) -> std::cmp::Ordering {
-    let cmp = cmp_i64(a.ts, b.ts, dir);
-    if cmp != std::cmp::Ordering::Equal {
-        return cmp;
-    }
-    let cmp = cmp_str(&a.filename, &b.filename, dir);
-    if cmp != std::cmp::Ordering::Equal {
-        return cmp;
-    }
-    cmp_str(&a.id, &b.id, dir)
 }
 
 fn decode_cursor(cursor: &str) -> Option<CursorPayload> {
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cursor).ok()?;
-    serde_json::from_slice::<CursorPayload>(&bytes).ok()
+    let bytes = base64::engine::general_purpose::STANDARD.decode(cursor).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 fn encode_cursor(key: &SortKey) -> Option<String> {
@@ -151,9 +168,12 @@ fn encode_cursor(key: &SortKey) -> Option<String> {
         ts: key.ts,
         filename: key.filename.clone(),
         id: key.id.clone(),
+        size: key.size,
+        click_count: key.click_count,
+        duplicate_count: key.duplicate_count,
     };
     let json = serde_json::to_vec(&payload).ok()?;
-    Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json))
+    Some(base64::engine::general_purpose::STANDARD.encode(json))
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +187,9 @@ fn dup_key(ts: i64, filename: &str, id: &str) -> SortKey {
         ts,
         filename: filename.to_string(),
         id: id.to_string(),
+        size: 0,
+        click_count: 0,
+        duplicate_count: 0,
     }
 }
 
@@ -289,10 +312,7 @@ pub async fn get_media_page(
     params: MediaPageRequest,
 ) -> Result<MediaPageResponse, String> {
     let filter_type = if params.r#type.trim().is_empty() { "all" } else { params.r#type.as_str() };
-    let sort_by = match params.sort_by.as_str() {
-        "createdAt" | "created_at" => "createdAt",
-        _ => "dateTaken",
-    };
+    let sort_by = params.sort_by.as_str();
     let dir = if params.sort_order.as_str() == "asc" { 1 } else { -1 };
     let limit = params.limit.unwrap_or(2000).clamp(1, 20000) as usize;
 
@@ -301,6 +321,9 @@ pub async fn get_media_page(
         ts: c.ts,
         filename: c.filename.clone(),
         id: c.id.clone(),
+        size: c.size,
+        click_count: c.click_count,
+        duplicate_count: c.duplicate_count,
     });
 
     let photos = store.get_photos().await;
@@ -309,14 +332,19 @@ pub async fn get_media_page(
 
     let mut entries: Vec<(SortKey, serde_json::Value)> = Vec::new();
 
+    let mut total_photos = 0;
+    let mut total_videos = 0;
+
+    let mut all_years = std::collections::HashSet::new();
+    let mut all_tags_count: HashMap<String, usize> = HashMap::new();
+
     for p in photos {
         if p.deleted {
             continue;
         }
-        if !should_include_type(filter_type, "photo") {
-            continue;
-        }
-        if !ai_tags_match(&p.ai_tags, &params.ai_tags) {
+        
+        let type_match = should_include_type(filter_type, "photo");
+        if !type_match {
             continue;
         }
 
@@ -326,11 +354,41 @@ pub async fn get_media_page(
             p.date_taken.as_deref().unwrap_or(p.created_at.as_str())
         };
         let ts = parse_ts(primary);
-        if let Some(y) = params.year {
-            if !year_matches(ts, y) {
-                continue;
+        let p_year = if ts > 0 {
+            chrono::Utc.timestamp_millis_opt(ts).single().map(|dt| dt.year())
+        } else {
+            None
+        };
+
+        let year_match = match params.year {
+            Some(y) => p_year == Some(y),
+            None => true,
+        };
+
+        let tags_match = ai_tags_match(&p.ai_tags, &params.ai_tags);
+
+        // For available years, we want items that match type and tags (ignoring year filter)
+        if tags_match {
+            if let Some(y) = p_year {
+                all_years.insert(y);
             }
         }
+
+        // For available tags, we want items that match type and year (ignoring tags filter)
+        if year_match {
+            for t in &p.ai_tags {
+                let normalized = t.trim().to_lowercase();
+                if !normalized.is_empty() {
+                    *all_tags_count.entry(normalized).or_insert(0) += 1;
+                }
+            }
+        }
+
+        if !tags_match || !year_match {
+            continue;
+        }
+
+        total_photos += 1;
 
         let mut p = p;
         if let Some(ref thumb) = p.thumbnail {
@@ -340,23 +398,22 @@ pub async fn get_media_page(
         }
         let mut val = serde_json::to_value(&p).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("photo");
-        if let Some(ref md5) = p.md5 {
+        let duplicate_count = if let Some(ref md5) = p.md5 {
             let key = format!("photo:{}", md5.trim());
             if let Some(state) = duplicates.get(&key) {
                 let show = if state.keeper_id == p.id { state.duplicate_count } else { 0 };
                 val["duplicateCount"] = serde_json::json!(show);
+                show as u64
             } else {
                 val["duplicateCount"] = serde_json::json!(0);
+                0
             }
         } else {
             val["duplicateCount"] = serde_json::json!(0);
-        }
-
-        let key = SortKey {
-            ts,
-            filename: p.filename.clone(),
-            id: p.id.clone(),
+            0
         };
+
+        let key = create_sort_key_from_photo(&p, ts, duplicate_count);
         entries.push((key, val));
     }
 
@@ -364,10 +421,9 @@ pub async fn get_media_page(
         if v.deleted {
             continue;
         }
-        if !should_include_type(filter_type, "video") {
-            continue;
-        }
-        if !params.ai_tags.is_empty() {
+
+        let type_match = should_include_type(filter_type, "video");
+        if !type_match {
             continue;
         }
 
@@ -377,11 +433,30 @@ pub async fn get_media_page(
             v.date_taken.as_deref().unwrap_or(v.created_at.as_str())
         };
         let ts = parse_ts(primary);
-        if let Some(y) = params.year {
-            if !year_matches(ts, y) {
-                continue;
+        let v_year = if ts > 0 {
+            chrono::Utc.timestamp_millis_opt(ts).single().map(|dt| dt.year())
+        } else {
+            None
+        };
+
+        let year_match = match params.year {
+            Some(y) => v_year == Some(y),
+            None => true,
+        };
+
+        let tags_match = params.ai_tags.is_empty();
+
+        if tags_match {
+            if let Some(y) = v_year {
+                all_years.insert(y);
             }
         }
+
+        if !tags_match || !year_match {
+            continue;
+        }
+
+        total_videos += 1;
 
         let mut v = v;
         if let Some(ref thumb) = v.thumbnail {
@@ -391,33 +466,35 @@ pub async fn get_media_page(
         }
         let mut val = serde_json::to_value(&v).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("video");
-        if let Some(ref md5) = v.md5 {
+        let duplicate_count = if let Some(ref md5) = v.md5 {
             let key = format!("video:{}", md5.trim());
             if let Some(state) = duplicates.get(&key) {
                 let show = if state.keeper_id == v.id { state.duplicate_count } else { 0 };
                 val["duplicateCount"] = serde_json::json!(show);
+                show as u64
             } else {
                 val["duplicateCount"] = serde_json::json!(0);
+                0
             }
         } else {
             val["duplicateCount"] = serde_json::json!(0);
-        }
-
-        let key = SortKey {
-            ts,
-            filename: v.filename.clone(),
-            id: v.id.clone(),
+            0
         };
+
+        let key = create_sort_key_from_video(&v, ts, duplicate_count);
         entries.push((key, val));
     }
 
-    entries.sort_by(|(a, _), (b, _)| cmp_key(a, b, dir));
+    let sort_by_field = sort_by.to_string();
+    let sort_by_field_clone = sort_by_field.clone();
+
+    entries.sort_by(move |(a, _), (b, _)| cmp_key(a, b, dir, &sort_by_field_clone));
 
     let total = entries.len();
     let mut filtered: Vec<(SortKey, serde_json::Value)> = if let Some(cursor_key) = cursor_key.as_ref() {
         entries
             .into_iter()
-            .filter(|(k, _)| cmp_key(k, cursor_key, dir) == std::cmp::Ordering::Greater)
+            .filter(|(k, _)| cmp_key(k, cursor_key, dir, &sort_by_field) == std::cmp::Ordering::Greater)
             .collect()
     } else {
         entries
@@ -433,9 +510,22 @@ pub async fn get_media_page(
 
     let items = filtered.into_iter().map(|(_, v)| v).collect();
 
+    let mut available_years: Vec<i32> = all_years.into_iter().collect();
+    available_years.sort_unstable_by(|a, b| b.cmp(a));
+
+    let mut available_ai_tags: Vec<TagCount> = all_tags_count
+        .into_iter()
+        .map(|(tag, count)| TagCount { tag, count })
+        .collect();
+    available_ai_tags.sort_by(|a, b| a.tag.cmp(&b.tag));
+
     Ok(MediaPageResponse {
         items,
         next_cursor,
         total,
+        total_photos,
+        total_videos,
+        available_years,
+        available_ai_tags,
     })
 }

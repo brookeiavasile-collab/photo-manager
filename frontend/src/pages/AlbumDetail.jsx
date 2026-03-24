@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { albumService, photoService } from '../services/api'
+import { albumService, photoService, videoService } from '../services/api'
 import MediaGrid from '../components/MediaGrid'
 import PhotoModal from '../components/PhotoModal'
+import VideoModal from '../components/VideoModal'
 import '../styles/AlbumDetail.css'
 
 function AlbumDetail() {
   const { id } = useParams()
   const [album, setAlbum] = useState(null)
-  const [photos, setPhotos] = useState([])
+  const [media, setMedia] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selectedPhoto, setSelectedPhoto] = useState(null)
+  const [selectedItem, setSelectedItem] = useState(null)
   const [isEditing, setIsEditing] = useState(false)
   const [albumName, setAlbumName] = useState('')
   const [albumDescription, setAlbumDescription] = useState('')
@@ -26,9 +27,26 @@ function AlbumDetail() {
       setAlbumName(albumData.name)
       setAlbumDescription(albumData.description || '')
 
-      const allPhotos = await photoService.getAll()
-      const albumPhotos = allPhotos.filter(p => albumData.photos.includes(p.id))
-      setPhotos(albumPhotos)
+      const [allPhotos, allVideos] = await Promise.all([
+        photoService.getAll(),
+        videoService.getAll()
+      ])
+      
+      const albumPhotos = allPhotos
+        .filter(p => albumData.photos.includes(p.id))
+        .map(p => ({ ...p, mediaType: 'photo' }))
+        
+      const albumVideos = allVideos
+        .filter(v => (albumData.videos || []).includes(v.id))
+        .map(v => ({ ...v, mediaType: 'video' }))
+
+      const combined = [...albumPhotos, ...albumVideos].sort((a, b) => {
+        const tA = new Date(a.dateTaken || a.createdAt).getTime()
+        const tB = new Date(b.dateTaken || b.createdAt).getTime()
+        return tB - tA
+      })
+      
+      setMedia(combined)
     } catch (error) {
       console.error('Failed to load album:', error)
     } finally {
@@ -52,10 +70,10 @@ function AlbumDetail() {
   const handlePhotoUpdate = async (photoId, updates) => {
     try {
       await photoService.update(photoId, updates)
-      const updatedPhotos = photos.map(p => 
-        p.id === photoId ? { ...p, ...updates } : p
+      const updatedMedia = media.map(m => 
+        (m.id === photoId && m.mediaType === 'photo') ? { ...m, ...updates } : m
       )
-      setPhotos(updatedPhotos)
+      setMedia(updatedMedia)
     } catch (error) {
       console.error('Failed to update photo:', error)
     }
@@ -64,9 +82,9 @@ function AlbumDetail() {
   const handlePhotoDelete = async (photoId) => {
     try {
       await photoService.delete(photoId)
-      setPhotos(prev => prev.filter(photo => photo.id !== photoId))
-      if (selectedPhoto?.id === photoId) {
-        setSelectedPhoto(null)
+      setMedia(prev => prev.filter(m => !(m.id === photoId && m.mediaType === 'photo')))
+      if (selectedItem?.id === photoId && selectedItem?.mediaType === 'photo') {
+        setSelectedItem(null)
       }
     } catch (error) {
       console.error('Failed to delete photo:', error)
@@ -74,10 +92,18 @@ function AlbumDetail() {
     }
   }
 
-  const albumMedia = photos.map(photo => ({
-    ...photo,
-    mediaType: 'photo'
-  }))
+  const handleVideoDelete = async (videoId) => {
+    try {
+      await videoService.delete(videoId)
+      setMedia(prev => prev.filter(m => !(m.id === videoId && m.mediaType === 'video')))
+      if (selectedItem?.id === videoId && selectedItem?.mediaType === 'video') {
+        setSelectedItem(null)
+      }
+    } catch (error) {
+      console.error('Failed to delete video:', error)
+      throw error
+    }
+  }
 
   if (loading) {
     return <div className="loading">加载中...</div>
@@ -113,7 +139,7 @@ function AlbumDetail() {
             <div className="album-header-info">
               <h1>{album.name}</h1>
               {album.description && <p>{album.description}</p>}
-              <p className="photo-count">{photos.length} 张照片</p>
+              <p className="photo-count">{media.length} 项媒体</p>
             </div>
             <button className="btn btn-secondary" onClick={() => setIsEditing(true)}>
               编辑相册
@@ -123,19 +149,30 @@ function AlbumDetail() {
       </div>
 
       <MediaGrid 
-        items={albumMedia}
-        onItemClick={setSelectedPhoto}
+        items={media}
+        onItemClick={setSelectedItem}
         onPhotoDelete={handlePhotoDelete}
+        onVideoDelete={handleVideoDelete}
       />
 
-      {selectedPhoto && (
+      {selectedItem?.mediaType === 'photo' && (
         <PhotoModal
-          photo={selectedPhoto}
-          photos={photos}
-          onClose={() => setSelectedPhoto(null)}
+          photo={selectedItem}
+          mediaItems={media}
+          onClose={() => setSelectedItem(null)}
           onUpdate={handlePhotoUpdate}
           onDelete={handlePhotoDelete}
-          onNavigate={setSelectedPhoto}
+          onNavigate={setSelectedItem}
+        />
+      )}
+      
+      {selectedItem?.mediaType === 'video' && (
+        <VideoModal
+          video={selectedItem}
+          mediaItems={media}
+          onClose={() => setSelectedItem(null)}
+          onDelete={handleVideoDelete}
+          onNavigate={setSelectedItem}
         />
       )}
     </div>
