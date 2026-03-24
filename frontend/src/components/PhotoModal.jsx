@@ -4,6 +4,7 @@ import TrashIcon from './icons/TrashIcon'
 import { FolderPathIcon } from './icons/AppIcons'
 import { isTauriApp, HTTP_ROOT_URL } from '../services/api'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { useZoomPan } from '../hooks/useZoomPan'
 import '../styles/PhotoModal.css'
 
 function PhotoModal({ photo, photos = [], mediaItems = null, onClose, onUpdate, onDelete, onNavigate }) {
@@ -13,20 +14,10 @@ function PhotoModal({ photo, photos = [], mediaItems = null, onClose, onUpdate, 
   const [isEditing, setIsEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [scale, setScale] = useState(1)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
-  const [isDragging, setIsDragging] = useState(false)
-  const dragStartRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 })
   const imageContainerRef = useRef(null)
-  const scaleRef = useRef(1)
-  const positionRef = useRef({ x: 0, y: 0 })
-  const touchRef = useRef({
-    mode: null,
-    initialDistance: 0,
-    initialScale: 1,
-    initialCenter: { x: 0, y: 0 },
-    initialPosition: { x: 0, y: 0 },
-    lastTouch: { x: 0, y: 0 },
+  const { scale, position, isDragging, zoomIn: handleZoomIn, zoomOut: handleZoomOut, reset: handleResetZoom, bind } = useZoomPan({
+    containerRef: imageContainerRef,
+    depKey: photo?.id
   })
 
   const navItems = Array.isArray(mediaItems) && mediaItems.length > 0 ? mediaItems : photos
@@ -74,216 +65,9 @@ function PhotoModal({ photo, photos = [], mediaItems = null, onClose, onUpdate, 
     setTags(photo.tags || [])
     setNotes(photo.notes || '')
     setIsEditing(false)
-    setScale(1)
-    setPosition({ x: 0, y: 0 })
   }, [photo.id])
 
-  useEffect(() => {
-    scaleRef.current = scale
-  }, [scale])
 
-  useEffect(() => {
-    positionRef.current = position
-  }, [position])
-
-  useEffect(() => {
-    const container = imageContainerRef.current
-    if (!container) return
-
-    const getTouchCenter = (touches) => {
-      if (touches.length < 2) return { x: 0, y: 0 }
-      return {
-        x: (touches[0].clientX + touches[1].clientX) / 2,
-        y: (touches[0].clientY + touches[1].clientY) / 2,
-      }
-    }
-
-    const getTouchDistance = (touches) => {
-      if (touches.length < 2) return 0
-      const dx = touches[0].clientX - touches[1].clientX
-      const dy = touches[0].clientY - touches[1].clientY
-      return Math.sqrt(dx * dx + dy * dy)
-    }
-
-    const handleTouchStart = (e) => {
-      if (e.touches.length === 2) {
-        e.preventDefault()
-        touchRef.current = {
-          mode: 'pinch',
-          initialDistance: getTouchDistance(e.touches),
-          initialScale: scaleRef.current,
-          initialCenter: getTouchCenter(e.touches),
-          initialPosition: positionRef.current,
-          lastTouch: touchRef.current.lastTouch,
-        }
-      } else if (e.touches.length === 1 && scaleRef.current > 1) {
-        const touch = e.touches[0]
-        touchRef.current = {
-          ...touchRef.current,
-          mode: 'pan',
-          lastTouch: { x: touch.clientX, y: touch.clientY },
-          initialPosition: positionRef.current,
-        }
-      }
-    }
-
-    const handleTouchMove = (e) => {
-      if (e.touches.length === 2) {
-        e.preventDefault()
-        const currentDistance = getTouchDistance(e.touches)
-        const currentCenter = getTouchCenter(e.touches)
-        const { initialDistance, initialScale, initialCenter, initialPosition } = touchRef.current
-        if (initialDistance > 0) {
-          const newScale = Math.max(0.5, Math.min(initialScale * (currentDistance / initialDistance), 5))
-          setScale(newScale)
-          if (newScale <= 1) {
-            setPosition({ x: 0, y: 0 })
-          } else {
-            setPosition({
-              x: initialPosition.x + (currentCenter.x - initialCenter.x),
-              y: initialPosition.y + (currentCenter.y - initialCenter.y),
-            })
-          }
-        }
-      } else if (e.touches.length === 1 && touchRef.current.mode === 'pan' && scaleRef.current > 1) {
-        e.preventDefault()
-        const touch = e.touches[0]
-        const { lastTouch } = touchRef.current
-        const nextPosition = {
-          x: positionRef.current.x + (touch.clientX - lastTouch.x),
-          y: positionRef.current.y + (touch.clientY - lastTouch.y),
-        }
-        touchRef.current.lastTouch = { x: touch.clientX, y: touch.clientY }
-        setPosition(nextPosition)
-      }
-    }
-
-    const handleTouchEnd = (e) => {
-      if (e.touches.length === 1 && scaleRef.current > 1) {
-        const touch = e.touches[0]
-        touchRef.current = {
-          ...touchRef.current,
-          mode: 'pan',
-          initialDistance: 0,
-          lastTouch: { x: touch.clientX, y: touch.clientY },
-        }
-        return
-      }
-
-      touchRef.current = {
-        ...touchRef.current,
-        mode: null,
-        initialDistance: 0,
-      }
-    }
-
-    const handleGestureStart = (e) => {
-      e.preventDefault()
-      touchRef.current = {
-        ...touchRef.current,
-        mode: 'pinch',
-        initialScale: scaleRef.current,
-        initialPosition: positionRef.current,
-      }
-    }
-
-    const handleGestureChange = (e) => {
-      e.preventDefault()
-      const baseScale = touchRef.current.initialScale || scaleRef.current
-      const nextScale = Math.max(0.5, Math.min(baseScale * e.scale, 5))
-      setScale(nextScale)
-      if (nextScale <= 1) {
-        setPosition({ x: 0, y: 0 })
-      }
-    }
-
-    const handleTrackpadWheel = (e) => {
-      if (e.ctrlKey) {
-        e.preventDefault()
-        const delta = -e.deltaY * 0.01
-        setScale(prev => {
-          const nextScale = Math.max(0.5, Math.min(prev + delta, 5))
-          if (nextScale <= 1) {
-            setPosition({ x: 0, y: 0 })
-          }
-          return nextScale
-        })
-        return
-      }
-
-      if (scaleRef.current > 1) {
-        e.preventDefault()
-        setPosition(prev => ({
-          x: prev.x - e.deltaX,
-          y: prev.y - e.deltaY,
-        }))
-      }
-    }
-
-    container.addEventListener('touchstart', handleTouchStart, { passive: false })
-    container.addEventListener('touchmove', handleTouchMove, { passive: false })
-    container.addEventListener('touchend', handleTouchEnd)
-    container.addEventListener('touchcancel', handleTouchEnd)
-    container.addEventListener('gesturestart', handleGestureStart)
-    container.addEventListener('gesturechange', handleGestureChange)
-    container.addEventListener('wheel', handleTrackpadWheel, { passive: false })
-
-    return () => {
-      container.removeEventListener('touchstart', handleTouchStart)
-      container.removeEventListener('touchmove', handleTouchMove)
-      container.removeEventListener('touchend', handleTouchEnd)
-      container.removeEventListener('touchcancel', handleTouchEnd)
-      container.removeEventListener('gesturestart', handleGestureStart)
-      container.removeEventListener('gesturechange', handleGestureChange)
-      container.removeEventListener('wheel', handleTrackpadWheel)
-    }
-  }, [])
-
-  const handleZoomIn = () => {
-    setScale(prev => Math.min(prev + 0.25, 5))
-  }
-
-  const handleZoomOut = () => {
-    setScale(prev => {
-      const newScale = Math.max(prev - 0.25, 0.5)
-      if (newScale <= 1) {
-        setPosition({ x: 0, y: 0 })
-      }
-      return newScale
-    })
-  }
-
-  const handleResetZoom = () => {
-    setScale(1)
-    setPosition({ x: 0, y: 0 })
-  }
-
-const handleMouseDown = (e) => {
-    if (scale > 1 && e.button === 0) {
-      setIsDragging(true)
-      dragStartRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        posX: position.x,
-        posY: position.y
-      }
-    }
-  }
-
-  const handleMouseMove = (e) => {
-    if (isDragging && scale > 1) {
-      const dx = e.clientX - dragStartRef.current.x
-      const dy = e.clientY - dragStartRef.current.y
-      setPosition({
-        x: dragStartRef.current.posX + dx,
-        y: dragStartRef.current.posY + dy
-      })
-    }
-  }
-
-  const handleMouseUp = () => {
-    setIsDragging(false)
-  }
 
   if (!photo) return null
 
@@ -356,10 +140,7 @@ const handleMouseDown = (e) => {
         <div 
           className="modal-image-container"
           ref={imageContainerRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          {...bind}
         >
           {hasPrev && (
             <button 
