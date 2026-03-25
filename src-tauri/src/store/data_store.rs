@@ -2,14 +2,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 
 use crate::models::{Photo, Video, Album, Tag, Config};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Data {
+    #[serde(default)]
     pub photos: Vec<Photo>,
+    #[serde(default)]
     pub videos: Vec<Video>,
+    #[serde(default)]
     pub albums: Vec<Album>,
+    #[serde(default)]
     pub tags: Vec<Tag>,
 }
 
@@ -231,59 +236,102 @@ impl DataStore {
     // Persistence
     async fn save_data(&self, data: &Data) {
         let path = self.data_dir.join("data.json");
+        let tmp_path = self.data_dir.join("data.json.tmp");
+        let bak_path = self.data_dir.join("data.json.bak");
         if let Ok(json) = serde_json::to_string_pretty(data) {
-            let _ = tokio::fs::write(&path, json).await;
+            if let Err(e) = tokio::fs::write(&tmp_path, json).await {
+                eprintln!("ERROR: Failed to write temp data.json: {}", e);
+                return;
+            }
+            if path.exists() {
+                if let Err(e) = tokio::fs::copy(&path, &bak_path).await {
+                    eprintln!("WARNING: Failed to backup data.json: {}", e);
+                }
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    eprintln!("WARNING: Failed to remove old data.json: {}", e);
+                }
+            }
+            if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
+                eprintln!("CRITICAL: Failed to replace data.json: {}", e);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+            }
         }
     }
 
     async fn save_config(&self, config: &Config) {
         let path = self.data_dir.join("config.json");
+        let tmp_path = self.data_dir.join("config.json.tmp");
+        let bak_path = self.data_dir.join("config.json.bak");
         if let Ok(json) = serde_json::to_string_pretty(config) {
-            let _ = tokio::fs::write(&path, json).await;
+            if let Err(e) = tokio::fs::write(&tmp_path, json).await {
+                eprintln!("ERROR: Failed to write temp config.json: {}", e);
+                return;
+            }
+            if path.exists() {
+                if let Err(e) = tokio::fs::copy(&path, &bak_path).await {
+                    eprintln!("WARNING: Failed to backup config.json: {}", e);
+                }
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    eprintln!("WARNING: Failed to remove old config.json: {}", e);
+                }
+            }
+            if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
+                eprintln!("CRITICAL: Failed to replace config.json: {}", e);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+            }
         }
     }
 
-    pub async fn load(&self) {
-        // Load data
-        let data_path = self.data_dir.join("data.json");
-        if data_path.exists() {
-            match tokio::fs::read_to_string(&data_path).await {
-                Ok(content) => {
-                    match serde_json::from_str::<Data>(&content) {
-                        Ok(data) => {
-                            let mut d = self.data.write().await;
-                            *d = data;
-                        }
-                        Err(e) => {
-                            eprintln!("CRITICAL: Failed to parse data.json: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("ERROR: Failed to read data.json: {}", e);
-                }
+    async fn read_json_with_backup<T: DeserializeOwned>(
+        &self,
+        primary: &PathBuf,
+        backup: &PathBuf,
+        label: &str,
+    ) -> Option<T> {
+        if primary.exists() {
+            match tokio::fs::read_to_string(primary).await {
+                Ok(content) => match serde_json::from_str::<T>(&content) {
+                    Ok(parsed) => return Some(parsed),
+                    Err(e) => eprintln!("CRITICAL: Failed to parse {}: {}", label, e),
+                },
+                Err(e) => eprintln!("ERROR: Failed to read {}: {}", label, e),
             }
         }
 
-        // Load config
-        let config_path = self.data_dir.join("config.json");
-        if config_path.exists() {
-            match tokio::fs::read_to_string(&config_path).await {
-                Ok(content) => {
-                    match serde_json::from_str::<Config>(&content) {
-                        Ok(config) => {
-                            let mut c = self.config.write().await;
-                            *c = config;
-                        }
-                        Err(e) => {
-                            eprintln!("WARNING: Failed to parse config.json: {}", e);
-                        }
+        if backup.exists() {
+            match tokio::fs::read_to_string(backup).await {
+                Ok(content) => match serde_json::from_str::<T>(&content) {
+                    Ok(parsed) => {
+                        eprintln!("WARNING: Loaded {} from backup file", label);
+                        return Some(parsed);
                     }
-                }
-                Err(e) => {
-                    eprintln!("ERROR: Failed to read config.json: {}", e);
-                }
+                    Err(e) => eprintln!("CRITICAL: Failed to parse backup {}: {}", label, e),
+                },
+                Err(e) => eprintln!("ERROR: Failed to read backup {}: {}", label, e),
             }
+        }
+        None
+    }
+
+    pub async fn load(&self) {
+        let data_path = self.data_dir.join("data.json");
+        let data_bak_path = self.data_dir.join("data.json.bak");
+        if let Some(data) = self
+            .read_json_with_backup::<Data>(&data_path, &data_bak_path, "data.json")
+            .await
+        {
+            let mut d = self.data.write().await;
+            *d = data;
+        }
+
+        let config_path = self.data_dir.join("config.json");
+        let config_bak_path = self.data_dir.join("config.json.bak");
+        if let Some(config) = self
+            .read_json_with_backup::<Config>(&config_path, &config_bak_path, "config.json")
+            .await
+        {
+            let mut c = self.config.write().await;
+            *c = config;
         }
     }
 }

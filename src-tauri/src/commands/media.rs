@@ -25,8 +25,56 @@ pub enum MediaData {
 pub async fn get_media(store: State<'_, Arc<DataStore>>) -> Result<Vec<serde_json::Value>, String> {
     let photos = store.get_photos().await;
     let videos = store.get_videos().await;
-    
-    Ok(Vec::new())
+    let mut media: Vec<serde_json::Value> = Vec::new();
+
+    for p in photos {
+        if p.deleted {
+            continue;
+        }
+        let mut p = p;
+        if let Some(ref thumb) = p.thumbnail {
+            if !Path::new(thumb).exists() {
+                p.thumbnail = None;
+            }
+        }
+        let mut val = serde_json::to_value(&p).map_err(|e| e.to_string())?;
+        val["type"] = serde_json::json!("photo");
+        media.push(val);
+    }
+
+    for v in videos {
+        if v.deleted {
+            continue;
+        }
+        let mut v = v;
+        if let Some(ref thumb) = v.thumbnail {
+            if !Path::new(thumb).exists() {
+                v.thumbnail = None;
+            }
+        }
+        let mut val = serde_json::to_value(&v).map_err(|e| e.to_string())?;
+        val["type"] = serde_json::json!("video");
+        media.push(val);
+    }
+
+    media.sort_by(|a, b| {
+        let a_primary = a
+            .get("date_taken")
+            .and_then(|d| d.as_str())
+            .or_else(|| a.get("created_at").and_then(|d| d.as_str()))
+            .unwrap_or("");
+        let b_primary = b
+            .get("date_taken")
+            .and_then(|d| d.as_str())
+            .or_else(|| b.get("created_at").and_then(|d| d.as_str()))
+            .unwrap_or("");
+
+        let a_ts = parse_ts(a_primary);
+        let b_ts = parse_ts(b_primary);
+        b_ts.cmp(&a_ts)
+    });
+
+    Ok(media)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

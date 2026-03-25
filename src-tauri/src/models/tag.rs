@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct Tag {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub count: u32,
 }
 

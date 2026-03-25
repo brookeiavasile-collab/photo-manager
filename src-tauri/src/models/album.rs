@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_time() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Album {
@@ -11,7 +15,9 @@ pub struct Album {
     pub photo_ids: Vec<String>,
     #[serde(default)]
     pub video_ids: Vec<String>,
+    #[serde(default = "default_time")]
     pub created_at: String,
+    #[serde(default = "default_time")]
     pub updated_at: String,
 }
 
