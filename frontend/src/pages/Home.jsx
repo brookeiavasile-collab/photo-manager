@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { isTauriApp, mediaService, photoService, videoService } from '../services/api'
 import scanService from '../services/scanService'
 import MediaGrid from '../components/MediaGrid'
