@@ -1,10 +1,13 @@
 use reqwest::Client;
 use serde::Deserialize;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
+use lazy_static::lazy_static;
 use crate::store::cache_store::CachedAddress;
 
-static LAST_REQUEST_MS: AtomicU64 = AtomicU64::new(0);
+lazy_static! {
+    static ref LAST_REQUEST_MS: Mutex<u64> = Mutex::new(0);
+}
 const MIN_INTERVAL_MS: u64 = 1100;
 
 fn now_ms() -> u64 {
@@ -48,16 +51,18 @@ impl Geocoder {
     }
 
     async fn wait_for_rate_limit() {
+        let mut last_req = LAST_REQUEST_MS.lock().await;
         let now = now_ms();
-        let last = LAST_REQUEST_MS.load(Ordering::Relaxed);
         
-        if last > 0 {
-            let elapsed = now.saturating_sub(last);
+        if *last_req > 0 {
+            let elapsed = now.saturating_sub(*last_req);
             if elapsed < MIN_INTERVAL_MS {
                 let wait = MIN_INTERVAL_MS - elapsed;
                 tokio::time::sleep(Duration::from_millis(wait)).await;
             }
         }
+        
+        *last_req = now_ms();
     }
 
     pub async fn reverse_geocode(&self, lat: f64, lon: f64) -> Option<CachedAddress> {
@@ -74,8 +79,6 @@ impl Geocoder {
             .send()
             .await
             .ok()?;
-
-        LAST_REQUEST_MS.store(now_ms(), Ordering::Relaxed);
 
         if !response.status().is_success() {
             return None;

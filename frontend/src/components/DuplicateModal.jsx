@@ -81,7 +81,8 @@ function DuplicateModal({ photo, onClose, onRefresh }) {
 
       await loadDuplicates()
       if (typeof onRefresh === 'function') {
-        await onRefresh()
+        // deletedCount can be used by parent to adjust duplicateCount locally
+        onRefresh({ md5: photo.md5, mediaType: isVideo ? 'video' : 'photo', deletedCount: removed })
       }
       setConfirmState(null)
       onClose()
@@ -114,7 +115,9 @@ function DuplicateModal({ photo, onClose, onRefresh }) {
         }
       }
       loadDuplicates()
-      onRefresh()
+      if (typeof onRefresh === 'function') {
+        onRefresh({ md5: photo.md5, mediaType: isVideo ? 'video' : 'photo', deletedCount: 1 })
+      }
       setConfirmState(null)
     } catch (error) {
       console.error('Failed to delete photo:', error)

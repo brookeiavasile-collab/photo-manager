@@ -373,6 +373,14 @@ export const mediaService = {
 
   async getPage({ type = 'all', sortBy = 'dateTaken', sortOrder = 'desc', year = null, aiTags = [], cursor = null, limit = 2000 } = {}) {
     return callApi('get_media_page', {
+      type,
+      sortBy,
+      sortOrder,
+      year,
+      aiTags,
+      cursor,
+      limit,
+    }, () => api.get('/media/page', {
       params: {
         type,
         sortBy,
@@ -382,7 +390,7 @@ export const mediaService = {
         cursor,
         limit,
       }
-    })
+    }).then(r => r.data))
   },
 
   async getStats() {

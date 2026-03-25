@@ -327,19 +327,30 @@ pub async fn scan_directory(
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file() && scanner.is_supported(e.path()))
         .count();
+        
+    let video_total = WalkDir::new(&dir_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() && video_scanner.is_video(e.path()))
+        .count();
+        
+    let total_media_count = photo_total + video_total;
+
     {
         let mut state = scan_state.lock().unwrap();
-        state.total_count = photo_total;
+        state.total_count = total_media_count;
     }
 
-    let counter = AtomicUsize::new(0);
+    let global_counter = AtomicUsize::new(0);
     let on_progress = |current: usize, total: usize, filename: &str, is_skipped: bool, log_actions: &[String]| {
+        let current_to_emit;
         {
             let mut state = scan_state_for_progress.lock().unwrap();
             if !state.scanning {
                 return;
             }
-            state.scanned_count = current;
+            state.scanned_count = state.scanned_count.max(current);
+            current_to_emit = state.scanned_count;
             state.total_count = total;
             state.current_path = Some(filename.to_string());
             
@@ -347,6 +358,14 @@ pub async fn scan_directory(
                 state.skipped_count += 1;
             } else {
                 state.processed_count += 1;
+            }
+
+            // 每扫描一定数量的文件执行一次部分写回，防止中途崩溃丢失
+            if state.scanned_count % 50 == 0 {
+                let cache_clone = cache.inner().clone();
+                tokio::spawn(async move {
+                    cache_clone.flush_all().await;
+                });
             }
 
             if !is_skipped || current == 1 || current == total || current % 10 == 0 {
@@ -361,7 +380,7 @@ pub async fn scan_directory(
         }
         let _ = progress_app.emit("scan-progress", serde_json::json!({
             "type": "file",
-            "current": current,
+            "current": current_to_emit,
             "total": total,
             "filename": filename
         }));
@@ -393,8 +412,8 @@ pub async fn scan_directory(
             &existing_photo_map,
             force,
             &should_stop,
-            &counter,
-            photo_total,
+            &global_counter,
+            total_media_count,
             &on_progress,
         );
 
@@ -414,8 +433,8 @@ pub async fn scan_directory(
             &existing_photo_map,
             force,
             &should_stop,
-            &counter,
-            photo_total,
+            &global_counter,
+            total_media_count,
             &on_progress,
         );
         for p in batch {
@@ -454,7 +473,9 @@ pub async fn scan_directory(
     
     let _ = app.emit("scan-progress", serde_json::json!({
         "type": "progress",
-        "stage": "scanning_videos"
+        "stage": "scanning_videos",
+        "current": global_counter.load(Ordering::Relaxed),
+        "total": total_media_count
     }));
     
     let mut existing_video_map: HashMap<String, crate::models::Video> = HashMap::new();
@@ -469,7 +490,7 @@ pub async fn scan_directory(
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file() && video_scanner.is_video(e.path()))
         .count();
-    let video_counter = AtomicUsize::new(0);
+    // let video_counter = AtomicUsize::new(0);
 
     const VIDEO_BATCH: usize = 16;
     let mut vbuf: Vec<PathBuf> = Vec::with_capacity(VIDEO_BATCH);
@@ -498,8 +519,8 @@ pub async fn scan_directory(
             &existing_video_map,
             force,
             &should_stop,
-            &video_counter,
-            video_total,
+            &global_counter,
+            total_media_count,
             &on_progress,
         );
 
@@ -519,8 +540,8 @@ pub async fn scan_directory(
             &existing_video_map,
             force,
             &should_stop,
-            &video_counter,
-            video_total,
+            &global_counter,
+            total_media_count,
             &on_progress,
         );
         for v in batch {
@@ -554,6 +575,15 @@ pub async fn scan_directory(
 
     // 扫描阶段会写入内存缓存（GPS/AI），这里统一落盘，避免每条写盘造成极慢的 IO。
     cache.flush_all().await;
+    
+    // 触发后台地理编码任务
+    let store_clone = store.inner().clone();
+    let cache_clone = cache.inner().clone();
+    let app_clone = app.clone();
+    let scan_state_clone = scan_state.inner().clone();
+    tokio::spawn(async move {
+        crate::commands::directories::process_pending_geocoding(&store_clone, &cache_clone, &app_clone, &scan_state_clone).await;
+    });
 
     let final_state = {
         let mut state = scan_state.lock().unwrap();
@@ -604,6 +634,92 @@ pub async fn stop_scan(
     }
 
     Ok(true)
+}
+
+pub async fn process_pending_geocoding(
+    store: &Arc<DataStore>,
+    cache: &Arc<CacheStore>,
+    app: &tauri::AppHandle,
+    scan_state: &Arc<Mutex<ScanState>>,
+) {
+    let mut pending_photos = Vec::new();
+    let mut pending_videos = Vec::new();
+
+    // 找出所有需要填充地址的照片
+    for photo in store.get_photos().await {
+        if photo.deleted {
+            continue;
+        }
+        if photo.address.is_none() {
+            if let Some(ref exif) = photo.exif {
+                if let Some(ref gps) = exif.gps {
+                    pending_photos.push((photo.id.clone(), gps.latitude, gps.longitude));
+                }
+            }
+        }
+    }
+
+    // 找出所有需要填充地址的视频
+    for video in store.get_videos().await {
+        if video.address.is_none() {
+            if let Some(ref exif) = video.exif {
+                if let Some(ref gps) = exif.gps {
+                    pending_videos.push((video.id.clone(), gps.latitude, gps.longitude));
+                }
+            }
+        }
+    }
+
+    let total_pending = pending_photos.len() + pending_videos.len();
+    if total_pending == 0 {
+        return;
+    }
+
+    {
+        let mut state = scan_state.lock().unwrap();
+        push_scan_log(&mut state, format!("开始后台获取 {} 个位置的地址信息", total_pending), "info", Some(app));
+    }
+
+    let geocoder = crate::scanner::geocoder::Geocoder::new();
+    let mut processed = 0;
+
+    for (id, lat, lon) in pending_photos {
+        if let Some(address) = geocoder.reverse_geocode(lat, lon).await {
+            cache.save_address_mem_sync(lat, lon, address.clone());
+            if let Some(mut photo) = store.get_photo_by_id(&id).await {
+                photo.address = Some(crate::models::Address::from(address));
+                store.update_photo(&id, photo).await;
+            }
+        }
+        processed += 1;
+        if processed % 10 == 0 {
+            cache.flush_all().await;
+            let mut state = scan_state.lock().unwrap();
+            push_scan_log(&mut state, format!("后台地址获取进度: {}/{}", processed, total_pending), "info", Some(app));
+        }
+    }
+
+    for (id, lat, lon) in pending_videos {
+        if let Some(address) = geocoder.reverse_geocode(lat, lon).await {
+            cache.save_address_mem_sync(lat, lon, address.clone());
+            if let Some(mut video) = store.get_video_by_id(&id).await {
+                video.address = Some(crate::models::Address::from(address));
+                store.update_video(&id, video).await;
+            }
+        }
+        processed += 1;
+        if processed % 10 == 0 {
+            cache.flush_all().await;
+            let mut state = scan_state.lock().unwrap();
+            push_scan_log(&mut state, format!("后台地址获取进度: {}/{}", processed, total_pending), "info", Some(app));
+        }
+    }
+
+    cache.flush_all().await;
+    {
+        let mut state = scan_state.lock().unwrap();
+        push_scan_log(&mut state, "后台地址获取完成".to_string(), "success", Some(app));
+    }
 }
 
 #[tauri::command]

@@ -176,14 +176,18 @@ impl CacheStore {
     async fn save_gps_cache(&self, cache: &GpsCache) {
         let path = self.data_dir.join("gps_cache.json");
         if let Ok(json) = serde_json::to_string_pretty(cache) {
-            let _ = tokio::fs::write(&path, json).await;
+            if let Err(e) = tokio::fs::write(&path, json).await {
+                eprintln!("Failed to save gps_cache.json: {}", e);
+            }
         }
     }
 
     async fn save_ai_cache(&self, cache: &AiCache) {
         let path = self.data_dir.join("ai_cache.json");
         if let Ok(json) = serde_json::to_string_pretty(cache) {
-            let _ = tokio::fs::write(&path, json).await;
+            if let Err(e) = tokio::fs::write(&path, json).await {
+                eprintln!("Failed to save ai_cache.json: {}", e);
+            }
         }
     }
 

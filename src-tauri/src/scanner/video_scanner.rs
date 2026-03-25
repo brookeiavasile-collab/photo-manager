@@ -15,6 +15,7 @@ pub struct VideoScanner {
     thumbnail_size: u32,
     video_formats: Vec<String>,
     concurrency: usize,
+    geocoder: Geocoder,
 }
 
 impl VideoScanner {
@@ -24,7 +25,7 @@ impl VideoScanner {
         } else {
             scan_concurrency as usize
         };
-        Self { thumbnail_size, video_formats, concurrency: c.max(1) }
+        Self { thumbnail_size, video_formats, concurrency: c.max(1), geocoder: Geocoder::new() }
     }
 
     pub fn is_video(&self, path: &Path) -> bool {
@@ -131,9 +132,8 @@ impl VideoScanner {
             return Some(Address::from(cached));
         }
 
-        let geocoder = Geocoder::new();
         let address = tauri::async_runtime::block_on(async {
-            geocoder.reverse_geocode(lat, lon).await
+            self.geocoder.reverse_geocode(lat, lon).await
         })?;
 
         cache.save_address_mem_sync(lat, lon, address.clone());
@@ -148,16 +148,24 @@ impl VideoScanner {
             return Some(thumb_path.to_string_lossy().to_string());
         }
 
+        // Check if ffmpeg is available
+        if Command::new("ffmpeg").arg("-version").output().is_err() {
+            eprintln!("ffmpeg is not installed or not in PATH");
+            return None;
+        }
+
+        // Use absolute paths and capture error output
         let status = Command::new("ffmpeg")
             .args(["-i", &path.to_string_lossy(), "-ss", "00:00:01", "-vframes", "1"])
             .arg("-vf").arg(format!("scale={}:-1", self.thumbnail_size))
             .args(["-y", &thumb_path.to_string_lossy()])
-            .status()
+            .output()
             .ok()?;
 
-        if status.success() {
+        if status.status.success() {
             Some(thumb_path.to_string_lossy().to_string())
         } else {
+            eprintln!("ffmpeg failed to generate thumbnail for {:?}. Error: {}", path, String::from_utf8_lossy(&status.stderr));
             None
         }
     }
@@ -255,8 +263,9 @@ impl VideoScanner {
 
                     if video.address.is_none() {
                         let g = gps.unwrap();
-                        log_actions.push("获取地址".to_string());
-                        video.address = self.geocode_sync(g.latitude, g.longitude, cache);
+                        if let Some(cached) = cache.get_address_sync(g.latitude, g.longitude) {
+                            video.address = Some(Address::from(cached));
+                        }
                     }
                 }
             }

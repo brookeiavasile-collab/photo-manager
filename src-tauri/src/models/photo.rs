@@ -52,14 +52,25 @@ pub struct Address {
     pub display_name: Option<String>,
 }
 
+fn default_time() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+fn default_category() -> String {
+    "其他".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Photo {
     pub id: String,
     pub path: String,
     pub filename: String,
+    #[serde(default)]
     pub size: u64,
+    #[serde(default = "default_time")]
     pub created_at: String,
+    #[serde(default = "default_time")]
     pub modified_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_taken: Option<String>,
@@ -67,6 +78,7 @@ pub struct Photo {
     pub exif: Option<Exif>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<Address>,
+    #[serde(default = "default_category")]
     pub category: String,
     #[serde(default)]
     pub ai_tags: Vec<String>,

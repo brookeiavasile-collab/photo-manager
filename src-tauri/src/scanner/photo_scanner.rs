@@ -303,8 +303,11 @@ impl PhotoScanner {
 
             if photo.address.is_none() {
                 if let Some(ref gps) = exif.gps {
-                    log_actions.push("获取地址".to_string());
-                    photo.address = self.geocode_sync(gps.latitude, gps.longitude, cache);
+                    if let Some(cached) = cache.get_address_sync(gps.latitude, gps.longitude) {
+                        photo.address = Some(Address::from(cached));
+                    }
+                    // 不在扫描线程中调用外部 API (geocode_sync)
+                    // 后续会有独立的后台任务专门处理地址填充
                 }
             }
         } else if let Some(ref dt) = filename_date {

@@ -299,14 +299,14 @@ function Home() {
     }
   }
 
-  const getPageRequestType = () => {
+  const getPageRequestType = useCallback(() => {
     if (selectedAiTags.length > 0) return 'photo'
     const types = mediaTypes || ['photo', 'video']
     if (types.length === 1) return types[0]
     return 'all'
-  }
+  }, [selectedAiTags, mediaTypes])
 
-  const loadMorePage = async ({ reset = false } = {}) => {
+  const loadMorePage = useCallback(async ({ reset = false } = {}) => {
     if (!pagingEnabled) return
     if (loadingMoreRef.current) return
     if (!reset && !hasMoreRef.current) return
@@ -370,18 +370,23 @@ function Home() {
       setLoadingMore(false)
       loadingMoreRef.current = false
     }
-  }
+  }, [pagingEnabled, sortBy, sortOrder, year, selectedAiTags, mediaTypes])
 
   const computedAvailableYears = useMemo(() => {
     if (pagingEnabled) return availableYears
-    const years = new Set()
+    
+    const yearCounts = new Map()
     media.forEach(item => {
       const itemDate = new Date(item.dateTaken || item.createdAt)
       if (itemDate && !isNaN(itemDate.getTime())) {
-        years.add(itemDate.getFullYear())
+        const y = itemDate.getFullYear()
+        yearCounts.set(y, (yearCounts.get(y) || 0) + 1)
       }
     })
-    return Array.from(years).sort((a, b) => b - a)
+    
+    return Array.from(yearCounts.entries())
+      .map(([year, count]) => ({ year, count }))
+      .sort((a, b) => b.year - a.year)
   }, [media, pagingEnabled, availableYears])
 
   const baseFilteredMedia = useMemo(() => {
@@ -540,7 +545,7 @@ function Home() {
 
     observer.observe(el)
     return () => observer.disconnect()
-  }, [pagingEnabled])
+  }, [pagingEnabled, loadMorePage])
 
   const handlePhotoUpdate = async (id, updates) => {
     try {
@@ -554,9 +559,17 @@ function Home() {
   const handlePhotoDelete = async (id) => {
     try {
       await photoService.delete(id)
-      fetchGlobalStats()
-      loadMedia()
-      if (selectedItem?.id === id) {
+      
+      // Local state update
+      setMedia(prev => prev.filter(item => !(item.id === id && item.mediaType === 'photo')))
+      setGlobalStats(prev => ({ ...prev, photos: Math.max(0, prev.photos - 1) }))
+      setFilteredStats(prev => ({ 
+        ...prev, 
+        total: Math.max(0, prev.total - 1),
+        photos: Math.max(0, prev.photos - 1) 
+      }))
+      
+      if (selectedItem?.id === id && selectedItem?.mediaType === 'photo') {
         setSelectedItem(null)
       }
     } catch (error) {
@@ -568,14 +581,42 @@ function Home() {
   const handleVideoDelete = async (id) => {
     try {
       await videoService.delete(id)
-      fetchGlobalStats()
-      loadMedia()
-      if (selectedItem?.id === id) {
+      
+      // Local state update
+      setMedia(prev => prev.filter(item => !(item.id === id && item.mediaType === 'video')))
+      setGlobalStats(prev => ({ ...prev, videos: Math.max(0, prev.videos - 1) }))
+      setFilteredStats(prev => ({ 
+        ...prev, 
+        total: Math.max(0, prev.total - 1),
+        videos: Math.max(0, prev.videos - 1) 
+      }))
+      
+      if (selectedItem?.id === id && selectedItem?.mediaType === 'video') {
         setSelectedItem(null)
       }
     } catch (error) {
       console.error('Failed to delete video:', error)
       throw error
+    }
+  }
+
+  const handleDuplicateDeleted = (deletedItem) => {
+    // We update the duplicate count of the main item shown in the grid
+    setMedia(prev => prev.map(item => {
+      if (item.md5 === deletedItem.md5 && item.mediaType === deletedItem.mediaType) {
+        return { 
+          ...item, 
+          duplicateCount: Math.max(0, (item.duplicateCount || 1) - (deletedItem.deletedCount || 1)) 
+        }
+      }
+      return item
+    }))
+    
+    // Update global stats
+    if (deletedItem.mediaType === 'photo') {
+      setGlobalStats(prev => ({ ...prev, photos: Math.max(0, prev.photos - (deletedItem.deletedCount || 1)) }))
+    } else {
+      setGlobalStats(prev => ({ ...prev, videos: Math.max(0, prev.videos - (deletedItem.deletedCount || 1)) }))
     }
   }
 
@@ -725,7 +766,10 @@ function Home() {
 
         <div className="filter-row">
           <div className="filter-group">
-            <label>年份</label>
+            <label>
+              年份
+              <span className="filter-label-count">({filteredStats.total}项)</span>
+            </label>
             <div className="filter-buttons">
               <button
                 className={`filter-btn ${!year ? 'active' : ''}`}
@@ -734,14 +778,14 @@ function Home() {
               >
                 全部
               </button>
-              {computedAvailableYears.map(y => (
+              {computedAvailableYears.map(item => (
                 <button
-                  key={y}
-                  className={`filter-btn ${year === y ? 'active' : ''}`}
-                  onClick={() => setYear(y)}
+                  key={item.year}
+                  className={`filter-btn ${year === item.year ? 'active' : ''}`}
+                  onClick={() => setYear(item.year)}
                   type="button"
                 >
-                  {y}
+                  {item.year} ({item.count})
                 </button>
               ))}
             </div>
@@ -847,7 +891,7 @@ function Home() {
         <DuplicateModal
           photo={duplicateItem}
           onClose={() => setDuplicateItem(null)}
-          onRefresh={loadMedia}
+          onRefresh={() => handleDuplicateDeleted(duplicateItem)}
         />
       )}
 

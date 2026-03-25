@@ -1,16 +1,27 @@
 use serde::{Deserialize, Serialize};
 use crate::models::{Exif, Address};
 
+fn default_time() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+fn default_video_type() -> String {
+    "video".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Video {
     pub id: String,
     pub path: String,
     pub filename: String,
+    #[serde(default)]
     pub size: u64,
+    #[serde(default = "default_time")]
     pub created_at: String,
+    #[serde(default = "default_time")]
     pub modified_at: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_video_type")]
     pub media_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date_taken: Option<String>,

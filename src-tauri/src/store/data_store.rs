@@ -45,6 +45,8 @@ impl DataStore {
         self.data.read().await.photos.clone()
     }
 
+
+
     pub async fn save_photos(&self, photos: Vec<Photo>) {
         let mut data = self.data.write().await;
         data.photos = photos;
@@ -64,15 +66,17 @@ impl DataStore {
         }
     }
 
-    pub async fn add_photo(&self, photo: Photo) {
-        let mut data = self.data.write().await;
-        data.photos.push(photo);
-        self.save_data(&data).await;
+    pub async fn get_photo_by_id(&self, id: &str) -> Option<Photo> {
+        let data = self.data.read().await;
+        data.photos.iter().find(|p| p.id == id).cloned()
     }
 
-    pub async fn get_photo_by_id(&self, id: &str) -> Option<Photo> {
-        self.data.read().await.photos.iter().find(|p| p.id == id).cloned()
+    pub async fn get_video_by_id(&self, id: &str) -> Option<Video> {
+        let data = self.data.read().await;
+        data.videos.iter().find(|v| v.id == id).cloned()
     }
+
+
 
     pub async fn update_photo(&self, id: &str, updates: Photo) -> bool {
         let mut data = self.data.write().await;
@@ -128,15 +132,18 @@ impl DataStore {
         }
     }
 
-    pub async fn add_video(&self, video: Video) {
+    pub async fn update_video(&self, id: &str, updates: Video) -> bool {
         let mut data = self.data.write().await;
-        data.videos.push(video);
-        self.save_data(&data).await;
+        if let Some(video) = data.videos.iter_mut().find(|v| v.id == id) {
+            *video = updates;
+            self.save_data(&data).await;
+            true
+        } else {
+            false
+        }
     }
 
-    pub async fn get_video_by_id(&self, id: &str) -> Option<Video> {
-        self.data.read().await.videos.iter().find(|v| v.id == id).cloned()
-    }
+
 
     pub async fn increment_video_view(&self, id: &str) -> Option<Video> {
         let mut data = self.data.write().await;
@@ -240,10 +247,20 @@ impl DataStore {
         // Load data
         let data_path = self.data_dir.join("data.json");
         if data_path.exists() {
-            if let Ok(content) = tokio::fs::read_to_string(&data_path).await {
-                if let Ok(data) = serde_json::from_str::<Data>(&content) {
-                    let mut d = self.data.write().await;
-                    *d = data;
+            match tokio::fs::read_to_string(&data_path).await {
+                Ok(content) => {
+                    match serde_json::from_str::<Data>(&content) {
+                        Ok(data) => {
+                            let mut d = self.data.write().await;
+                            *d = data;
+                        }
+                        Err(e) => {
+                            eprintln!("CRITICAL: Failed to parse data.json: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ERROR: Failed to read data.json: {}", e);
                 }
             }
         }
@@ -251,10 +268,20 @@ impl DataStore {
         // Load config
         let config_path = self.data_dir.join("config.json");
         if config_path.exists() {
-            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                if let Ok(config) = serde_json::from_str::<Config>(&content) {
-                    let mut c = self.config.write().await;
-                    *c = config;
+            match tokio::fs::read_to_string(&config_path).await {
+                Ok(content) => {
+                    match serde_json::from_str::<Config>(&content) {
+                        Ok(config) => {
+                            let mut c = self.config.write().await;
+                            *c = config;
+                        }
+                        Err(e) => {
+                            eprintln!("WARNING: Failed to parse config.json: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ERROR: Failed to read config.json: {}", e);
                 }
             }
         }

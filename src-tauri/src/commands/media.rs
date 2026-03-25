@@ -47,13 +47,20 @@ pub struct MediaPageRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct YearCount {
+    pub year: i32,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaPageResponse {
     pub items: Vec<serde_json::Value>,
     pub next_cursor: Option<String>,
     pub total: usize,
     pub total_photos: usize,
     pub total_videos: usize,
-    pub available_years: Vec<i32>,
+    pub available_years: Vec<YearCount>,
     pub available_ai_tags: Vec<TagCount>,
 }
 
@@ -335,7 +342,7 @@ pub async fn get_media_page(
     let mut total_photos = 0;
     let mut total_videos = 0;
 
-    let mut all_years = std::collections::HashSet::new();
+    let mut all_years_count: HashMap<i32, usize> = HashMap::new();
     let mut all_tags_count: HashMap<String, usize> = HashMap::new();
 
     for p in photos {
@@ -370,7 +377,7 @@ pub async fn get_media_page(
         // For available years, we want items that match type and tags (ignoring year filter)
         if tags_match {
             if let Some(y) = p_year {
-                all_years.insert(y);
+                *all_years_count.entry(y).or_insert(0) += 1;
             }
         }
 
@@ -448,7 +455,7 @@ pub async fn get_media_page(
 
         if tags_match {
             if let Some(y) = v_year {
-                all_years.insert(y);
+                *all_years_count.entry(y).or_insert(0) += 1;
             }
         }
 
@@ -510,8 +517,11 @@ pub async fn get_media_page(
 
     let items = filtered.into_iter().map(|(_, v)| v).collect();
 
-    let mut available_years: Vec<i32> = all_years.into_iter().collect();
-    available_years.sort_unstable_by(|a, b| b.cmp(a));
+    let mut available_years: Vec<YearCount> = all_years_count
+        .into_iter()
+        .map(|(year, count)| YearCount { year, count })
+        .collect();
+    available_years.sort_unstable_by(|a, b| b.year.cmp(&a.year));
 
     let mut available_ai_tags: Vec<TagCount> = all_tags_count
         .into_iter()
