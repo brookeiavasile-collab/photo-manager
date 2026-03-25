@@ -9,11 +9,7 @@ jobs:
   release:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
+    runs-on: windows-latest
 
     steps:
       - name: Checkout repository
@@ -26,8 +22,6 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install dependencies
         run: npm install
@@ -46,10 +40,8 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
 
       - name: Create Windows portable zip
-        if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
@@ -72,7 +64,6 @@ jobs:
           "PORTABLE_ZIP=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload Windows portable to Release
-        if: matrix.platform == 'windows-latest'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
