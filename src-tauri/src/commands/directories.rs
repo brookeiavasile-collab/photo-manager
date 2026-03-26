@@ -374,7 +374,7 @@ pub async fn scan_directory(
             // 每扫描一定数量的文件执行一次部分写回，防止中途崩溃丢失
             if state.scanned_count % 50 == 0 {
                 let cache_clone = cache.inner().clone();
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     cache_clone.flush_all().await;
                 });
             }

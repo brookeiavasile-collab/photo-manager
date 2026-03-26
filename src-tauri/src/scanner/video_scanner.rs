@@ -1,13 +1,15 @@
 use std::path::Path;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 use std::fs;
 use regex::Regex;
 use crate::models::{Video, Exif, Gps, Address};
 use crate::store::data_store::DataStore;
 use crate::store::cache_store::CacheStore;
 use crate::scanner::geocoder::Geocoder;
+use crate::logger;
 use rayon::prelude::*;
 use rayon::ThreadPool;
 
@@ -19,6 +21,26 @@ pub struct VideoScanner {
 }
 
 impl VideoScanner {
+    fn run_output_with_timeout(mut command: Command, timeout: Duration) -> Option<Output> {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = command.spawn().ok()?;
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return child.wait_with_output().ok(),
+                Ok(None) => {
+                    if start.elapsed() >= timeout {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
     pub fn new(thumbnail_size: u32, video_formats: Vec<String>, scan_concurrency: u32) -> Self {
         let c = if scan_concurrency == 0 {
             std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
@@ -58,11 +80,22 @@ impl VideoScanner {
     }
 
     pub fn extract_metadata(&self, path: &Path) -> Option<(f64, u32, u32, Option<String>, Option<Gps>)> {
-        let output = Command::new("ffprobe")
-            .args(["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams"])
-            .arg(path)
-            .output()
-            .ok()?;
+        logger::log_line(format!("ffprobe start file={}", path.display()));
+        let mut cmd = Command::new("ffprobe");
+        cmd.args(["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams"])
+            .arg(path);
+        let output = match Self::run_output_with_timeout(cmd, Duration::from_secs(15)) {
+            Some(out) => out,
+            None => {
+                logger::log_line(format!("ffprobe timeout file={}", path.display()));
+                return None;
+            }
+        };
+        logger::log_line(format!(
+            "ffprobe end file={} ok={}",
+            path.display(),
+            output.status.success()
+        ));
 
         let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
         
@@ -155,12 +188,23 @@ impl VideoScanner {
         }
 
         // Use absolute paths and capture error output
-        let status = Command::new("ffmpeg")
-            .args(["-i", &path.to_string_lossy(), "-ss", "00:00:01", "-vframes", "1"])
+        logger::log_line(format!("ffmpeg start file={}", path.display()));
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-v", "error", "-i", &path.to_string_lossy(), "-ss", "00:00:01", "-vframes", "1"])
             .arg("-vf").arg(format!("scale={}:-1", self.thumbnail_size))
-            .args(["-y", &thumb_path.to_string_lossy()])
-            .output()
-            .ok()?;
+            .args(["-y", &thumb_path.to_string_lossy()]);
+        let status = match Self::run_output_with_timeout(cmd, Duration::from_secs(20)) {
+            Some(out) => out,
+            None => {
+                logger::log_line(format!("ffmpeg timeout file={}", path.display()));
+                return None;
+            }
+        };
+        logger::log_line(format!(
+            "ffmpeg end file={} ok={}",
+            path.display(),
+            status.status.success()
+        ));
 
         if status.status.success() {
             Some(thumb_path.to_string_lossy().to_string())
