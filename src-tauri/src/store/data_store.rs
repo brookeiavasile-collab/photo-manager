@@ -238,22 +238,40 @@ impl DataStore {
         let path = self.data_dir.join("data.json");
         let tmp_path = self.data_dir.join("data.json.tmp");
         let bak_path = self.data_dir.join("data.json.bak");
+        let old_path = self.data_dir.join("data.json.old");
+        let writing_empty = data.photos.is_empty()
+            && data.videos.is_empty()
+            && data.albums.is_empty()
+            && data.tags.is_empty();
         if let Ok(json) = serde_json::to_string_pretty(data) {
             if let Err(e) = tokio::fs::write(&tmp_path, json).await {
                 eprintln!("ERROR: Failed to write temp data.json: {}", e);
                 return;
             }
             if path.exists() {
-                if let Err(e) = tokio::fs::copy(&path, &bak_path).await {
-                    eprintln!("WARNING: Failed to backup data.json: {}", e);
+                if !writing_empty || !bak_path.exists() {
+                    if let Err(e) = tokio::fs::copy(&path, &bak_path).await {
+                        eprintln!("WARNING: Failed to backup data.json: {}", e);
+                    }
+                } else {
+                    eprintln!("WARNING: Skip overwriting backup with empty data.json");
                 }
-                if let Err(e) = tokio::fs::remove_file(&path).await {
-                    eprintln!("WARNING: Failed to remove old data.json: {}", e);
+                if let Err(e) = tokio::fs::rename(&path, &old_path).await {
+                    eprintln!("CRITICAL: Failed to stage old data.json: {}", e);
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    return;
                 }
             }
             if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
                 eprintln!("CRITICAL: Failed to replace data.json: {}", e);
                 let _ = tokio::fs::remove_file(&tmp_path).await;
+                if old_path.exists() {
+                    let _ = tokio::fs::rename(&old_path, &path).await;
+                }
+                return;
+            }
+            if old_path.exists() {
+                let _ = tokio::fs::remove_file(&old_path).await;
             }
         }
     }
@@ -262,6 +280,7 @@ impl DataStore {
         let path = self.data_dir.join("config.json");
         let tmp_path = self.data_dir.join("config.json.tmp");
         let bak_path = self.data_dir.join("config.json.bak");
+        let old_path = self.data_dir.join("config.json.old");
         if let Ok(json) = serde_json::to_string_pretty(config) {
             if let Err(e) = tokio::fs::write(&tmp_path, json).await {
                 eprintln!("ERROR: Failed to write temp config.json: {}", e);
@@ -271,13 +290,22 @@ impl DataStore {
                 if let Err(e) = tokio::fs::copy(&path, &bak_path).await {
                     eprintln!("WARNING: Failed to backup config.json: {}", e);
                 }
-                if let Err(e) = tokio::fs::remove_file(&path).await {
-                    eprintln!("WARNING: Failed to remove old config.json: {}", e);
+                if let Err(e) = tokio::fs::rename(&path, &old_path).await {
+                    eprintln!("CRITICAL: Failed to stage old config.json: {}", e);
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    return;
                 }
             }
             if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
                 eprintln!("CRITICAL: Failed to replace config.json: {}", e);
                 let _ = tokio::fs::remove_file(&tmp_path).await;
+                if old_path.exists() {
+                    let _ = tokio::fs::rename(&old_path, &path).await;
+                }
+                return;
+            }
+            if old_path.exists() {
+                let _ = tokio::fs::remove_file(&old_path).await;
             }
         }
     }
@@ -291,7 +319,15 @@ impl DataStore {
         if primary.exists() {
             match tokio::fs::read_to_string(primary).await {
                 Ok(content) => match serde_json::from_str::<T>(&content) {
-                    Ok(parsed) => return Some(parsed),
+                    Ok(parsed) => {
+                        eprintln!(
+                            "[Load] loaded {} from primary {} ({} bytes)",
+                            label,
+                            primary.display(),
+                            content.len()
+                        );
+                        return Some(parsed);
+                    }
                     Err(e) => eprintln!("CRITICAL: Failed to parse {}: {}", label, e),
                 },
                 Err(e) => eprintln!("ERROR: Failed to read {}: {}", label, e),
@@ -302,7 +338,12 @@ impl DataStore {
             match tokio::fs::read_to_string(backup).await {
                 Ok(content) => match serde_json::from_str::<T>(&content) {
                     Ok(parsed) => {
-                        eprintln!("WARNING: Loaded {} from backup file", label);
+                        eprintln!(
+                            "WARNING: Loaded {} from backup {} ({} bytes)",
+                            label,
+                            backup.display(),
+                            content.len()
+                        );
                         return Some(parsed);
                     }
                     Err(e) => eprintln!("CRITICAL: Failed to parse backup {}: {}", label, e),
@@ -314,6 +355,7 @@ impl DataStore {
     }
 
     pub async fn load(&self) {
+        eprintln!("[Load] start data_dir={}", self.data_dir.display());
         let data_path = self.data_dir.join("data.json");
         let data_bak_path = self.data_dir.join("data.json.bak");
         if let Some(data) = self
@@ -322,6 +364,19 @@ impl DataStore {
         {
             let mut d = self.data.write().await;
             *d = data;
+            eprintln!(
+                "[Load] data.json applied photos={} videos={} albums={} tags={}",
+                d.photos.len(),
+                d.videos.len(),
+                d.albums.len(),
+                d.tags.len()
+            );
+        } else {
+            eprintln!(
+                "[Load] data.json unavailable at primary={} backup={}",
+                data_path.display(),
+                data_bak_path.display()
+            );
         }
 
         let config_path = self.data_dir.join("config.json");
@@ -332,6 +387,20 @@ impl DataStore {
         {
             let mut c = self.config.write().await;
             *c = config;
+            eprintln!(
+                "[Load] config.json applied directories={} photo_formats={} video_formats={} scan_concurrency={}",
+                c.photo_directories.len(),
+                c.supported_formats.len(),
+                c.video_formats.len(),
+                c.scan_concurrency
+            );
+        } else {
+            eprintln!(
+                "[Load] config.json unavailable at primary={} backup={}",
+                config_path.display(),
+                config_bak_path.display()
+            );
         }
+        eprintln!("[Load] completed");
     }
 }

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::atomic::AtomicUsize;
 use tauri::{State, AppHandle, Emitter};
@@ -123,6 +124,10 @@ fn push_scan_log(scan_state: &mut ScanState, message: impl Into<String>, log_typ
             "logEntry": entry
         }));
     }
+}
+
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn get_home_path() -> String {
@@ -282,7 +287,7 @@ pub async fn scan_directory(
     }));
 
     {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(&scan_state);
         *state = ScanState {
             scanning: true,
             current_dir: Some(path.clone()),
@@ -337,7 +342,7 @@ pub async fn scan_directory(
     let total_media_count = photo_total + video_total;
 
     {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(&scan_state);
         state.total_count = total_media_count;
     }
 
@@ -345,7 +350,7 @@ pub async fn scan_directory(
     let on_progress = |current: usize, total: usize, filename: &str, is_skipped: bool, log_actions: &[String]| {
         let current_to_emit;
         {
-            let mut state = scan_state_for_progress.lock().unwrap();
+            let mut state = lock_or_recover(&scan_state_for_progress);
             if !state.scanning {
                 return;
             }
@@ -448,7 +453,7 @@ pub async fn scan_directory(
     if scan_cancelled.load(Ordering::Relaxed) {
         cache.flush_all().await;
         let final_state = {
-            let mut state = scan_state.lock().unwrap();
+            let mut state = lock_or_recover(&scan_state);
             state.scanning = false;
             state.current_dir = None;
             state.current_path = None;
@@ -467,7 +472,7 @@ pub async fn scan_directory(
     }
 
     {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(&scan_state);
         push_scan_log(&mut state, "阶段: scanning_videos", "info", Some(&app));
     }
     
@@ -555,7 +560,7 @@ pub async fn scan_directory(
     if scan_cancelled.load(Ordering::Relaxed) {
         cache.flush_all().await;
         let final_state = {
-            let mut state = scan_state.lock().unwrap();
+            let mut state = lock_or_recover(&scan_state);
             state.scanning = false;
             state.current_dir = None;
             state.current_path = None;
@@ -586,7 +591,7 @@ pub async fn scan_directory(
     });
 
     let final_state = {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(&scan_state);
         state.scanning = false;
         state.current_dir = None;
         state.current_path = None;
@@ -606,7 +611,7 @@ pub async fn scan_directory(
 
 #[tauri::command]
 pub async fn get_scan_state(scan_state: State<'_, Arc<Mutex<ScanState>>>) -> Result<ScanState, String> {
-    Ok(scan_state.lock().unwrap().clone())
+    Ok(lock_or_recover(&scan_state).clone())
 }
 
 #[tauri::command]
@@ -618,7 +623,7 @@ pub async fn stop_scan(
     scan_cancelled.store(true, Ordering::SeqCst);
 
     {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(&scan_state);
         state.scanning = false;
         state.current_dir = None;
         state.current_path = None;
@@ -629,7 +634,7 @@ pub async fn stop_scan(
     cache.flush_all().await;
 
     {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(&scan_state);
         push_scan_log(&mut state, "缓存已写入磁盘", "info", None);
     }
 
@@ -676,7 +681,7 @@ pub async fn process_pending_geocoding(
     }
 
     {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(scan_state);
         push_scan_log(&mut state, format!("开始后台获取 {} 个位置的地址信息", total_pending), "info", Some(app));
     }
 
@@ -694,7 +699,7 @@ pub async fn process_pending_geocoding(
         processed += 1;
         if processed % 10 == 0 {
             cache.flush_all().await;
-            let mut state = scan_state.lock().unwrap();
+            let mut state = lock_or_recover(scan_state);
             push_scan_log(&mut state, format!("后台地址获取进度: {}/{}", processed, total_pending), "info", Some(app));
         }
     }
@@ -710,14 +715,14 @@ pub async fn process_pending_geocoding(
         processed += 1;
         if processed % 10 == 0 {
             cache.flush_all().await;
-            let mut state = scan_state.lock().unwrap();
+            let mut state = lock_or_recover(scan_state);
             push_scan_log(&mut state, format!("后台地址获取进度: {}/{}", processed, total_pending), "info", Some(app));
         }
     }
 
     cache.flush_all().await;
     {
-        let mut state = scan_state.lock().unwrap();
+        let mut state = lock_or_recover(scan_state);
         push_scan_log(&mut state, "后台地址获取完成".to_string(), "success", Some(app));
     }
 }
@@ -748,7 +753,7 @@ pub async fn backfill_photo_addresses(
                   + videos.iter().filter(|v| !v.deleted).count();
 
     {
-        let mut state = address_backfill_state.lock().unwrap();
+        let mut state = lock_or_recover(&address_backfill_state);
         *state = AddressBackfillState {
             running: true,
             total: result.total,
@@ -792,7 +797,7 @@ pub async fn backfill_photo_addresses(
         if gps.is_none() {
             result.skipped += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -814,7 +819,7 @@ pub async fn backfill_photo_addresses(
         if photo.address.is_some() {
             result.skipped += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -837,7 +842,7 @@ pub async fn backfill_photo_addresses(
             photo.address = Some(address.clone());
             result.updated += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -856,7 +861,7 @@ pub async fn backfill_photo_addresses(
         } else {
             result.skipped += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -897,7 +902,7 @@ pub async fn backfill_photo_addresses(
         if gps.is_none() {
             result.skipped += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -919,7 +924,7 @@ pub async fn backfill_photo_addresses(
         if video.address.is_some() {
             result.skipped += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -942,7 +947,7 @@ pub async fn backfill_photo_addresses(
             video.address = Some(address.clone());
             result.updated += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -961,7 +966,7 @@ pub async fn backfill_photo_addresses(
         } else {
             result.skipped += 1;
             {
-                let mut state = address_backfill_state.lock().unwrap();
+                let mut state = lock_or_recover(&address_backfill_state);
                 state.scanned = result.scanned;
                 state.updated = result.updated;
                 state.skipped = result.skipped;
@@ -982,7 +987,7 @@ pub async fn backfill_photo_addresses(
     store.save_videos(videos).await;
     cache.flush_all().await;
     {
-        let mut state = address_backfill_state.lock().unwrap();
+        let mut state = lock_or_recover(&address_backfill_state);
         *state = AddressBackfillState {
             running: false,
             total: result.total,
@@ -1001,5 +1006,5 @@ pub async fn backfill_photo_addresses(
 pub async fn get_address_backfill_state(
     address_backfill_state: State<'_, Arc<Mutex<AddressBackfillState>>>,
 ) -> Result<AddressBackfillState, String> {
-    Ok(address_backfill_state.lock().unwrap().clone())
+    Ok(lock_or_recover(&address_backfill_state).clone())
 }

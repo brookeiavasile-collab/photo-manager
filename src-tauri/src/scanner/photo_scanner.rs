@@ -203,10 +203,16 @@ impl PhotoScanner {
 
     pub fn scan_directory(&self, dir: &Path, store: &DataStore, cache: &CacheStore) -> Vec<Photo> {
         let empty: HashMap<String, Photo> = HashMap::new();
-        let pool = rayon::ThreadPoolBuilder::new()
+        let pool = match rayon::ThreadPoolBuilder::new()
             .num_threads(self.concurrency)
             .build()
-            .expect("failed to build scan thread pool");
+        {
+            Ok(pool) => pool,
+            Err(e) => {
+                eprintln!("ERROR: failed to build scan thread pool: {}", e);
+                return Vec::new();
+            }
+        };
         self.scan_directory_with_progress_in_pool(&pool, dir, store, cache, &empty, false, || false, |_, _, _, _, _| {})
     }
 

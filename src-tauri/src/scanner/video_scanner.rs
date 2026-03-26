@@ -311,10 +311,16 @@ impl VideoScanner {
             return Vec::new();
         }
 
-        let pool = rayon::ThreadPoolBuilder::new()
+        let pool = match rayon::ThreadPoolBuilder::new()
             .num_threads(self.concurrency)
             .build()
-            .expect("failed to build scan thread pool");
+        {
+            Ok(pool) => pool,
+            Err(e) => {
+                eprintln!("ERROR: failed to build scan thread pool: {}", e);
+                return Vec::new();
+            }
+        };
 
         let counter = std::sync::atomic::AtomicUsize::new(0);
         self.scan_files_batch_in_pool(&pool, &files, store, cache, existing_by_path, force, &should_stop, &counter, files.len(), &|_, _, _, _, _| {})
