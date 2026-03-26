@@ -16,6 +16,7 @@ use crate::scanner::photo_scanner::PhotoScanner;
 use crate::scanner::video_scanner::VideoScanner;
 use crate::scanner::geocoder::Geocoder;
 use crate::models::Address;
+use crate::logger;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -265,6 +266,7 @@ pub async fn scan_directory(
     scan_state: State<'_, Arc<Mutex<ScanState>>>,
     scan_cancelled: State<'_, Arc<AtomicBool>>,
 ) -> Result<ScanState, String> {
+    logger::log_line(format!("scan_directory start path={} force={:?}", path, force));
     let force = force.unwrap_or(false);
     scan_cancelled.store(false, Ordering::SeqCst);
     let config = store.get_config().await;
@@ -280,6 +282,7 @@ pub async fn scan_directory(
     );
     
     let dir_path = PathBuf::from(&path);
+    logger::log_line(format!("scan_directory resolved dir_path={}", dir_path.display()));
 
     let _ = app.emit("scan-progress", serde_json::json!({
         "type": "started",
@@ -332,14 +335,17 @@ pub async fn scan_directory(
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file() && scanner.is_supported(e.path()))
         .count();
+    logger::log_line(format!("scan_directory photo_total={}", photo_total));
         
     let video_total = WalkDir::new(&dir_path)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file() && video_scanner.is_video(e.path()))
         .count();
+    logger::log_line(format!("scan_directory video_total={}", video_total));
         
     let total_media_count = photo_total + video_total;
+    logger::log_line(format!("scan_directory total_media_count={}", total_media_count));
 
     {
         let mut state = lock_or_recover(&scan_state);
@@ -448,6 +454,7 @@ pub async fn scan_directory(
     }
 
     let photos_in_dir: Vec<crate::models::Photo> = existing_photo_map.into_values().collect();
+    logger::log_line(format!("scan_directory photos_in_dir_count={}", photos_in_dir.len()));
     store.replace_photos_in_dir(&path, photos_in_dir, true).await;
 
     if scan_cancelled.load(Ordering::Relaxed) {
@@ -555,6 +562,7 @@ pub async fn scan_directory(
     }
 
     let videos_in_dir: Vec<crate::models::Video> = existing_video_map.into_values().collect();
+    logger::log_line(format!("scan_directory videos_in_dir_count={}", videos_in_dir.len()));
     store.replace_videos_in_dir(&path, videos_in_dir, true).await;
 
     if scan_cancelled.load(Ordering::Relaxed) {
@@ -580,6 +588,7 @@ pub async fn scan_directory(
 
     // 扫描阶段会写入内存缓存（GPS/AI），这里统一落盘，避免每条写盘造成极慢的 IO。
     cache.flush_all().await;
+    logger::log_line("scan_directory cache flushed");
     
     // 触发后台地理编码任务
     let store_clone = store.inner().clone();
@@ -600,6 +609,10 @@ pub async fn scan_directory(
         push_scan_log(&mut state, format!("扫描完成: {}，总共处理: {}，跳过: {}", path, processed, skipped), "success", Some(&app));
         state.clone()
     };
+    logger::log_line(format!(
+        "scan_directory complete path={} processed={} skipped={}",
+        path, final_state.processed_count, final_state.skipped_count
+    ));
     
     let _ = app.emit("scan-progress", serde_json::json!({
         "type": "complete",
@@ -620,6 +633,7 @@ pub async fn stop_scan(
     cache: State<'_, Arc<CacheStore>>,
     scan_cancelled: State<'_, Arc<AtomicBool>>,
 ) -> Result<bool, String> {
+    logger::log_line("stop_scan requested");
     scan_cancelled.store(true, Ordering::SeqCst);
 
     {

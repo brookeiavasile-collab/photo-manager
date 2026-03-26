@@ -2,6 +2,7 @@ mod models;
 mod store;
 mod scanner;
 mod commands;
+mod logger;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +14,8 @@ use store::cache_store::CacheStore;
 
 pub fn run() {
     let data_dir = get_data_dir();
+    logger::init(data_dir.join("runtime.log"));
+    logger::log_line(format!("startup data_dir={}", data_dir.display()));
     eprintln!("[Startup] data_dir={}", data_dir.display());
     let data_json = data_dir.join("data.json");
     let config_json = data_dir.join("config.json");
@@ -20,15 +23,23 @@ pub fn run() {
     let ai_cache = data_dir.join("ai_cache.json");
     for p in [&data_json, &config_json, &gps_cache, &ai_cache] {
         if let Ok(meta) = std::fs::metadata(p) {
+            logger::log_line(format!("startup file={} exists=true size={}B", p.display(), meta.len()));
             eprintln!(
                 "[Startup] file={} exists=true size={}B",
                 p.display(),
                 meta.len()
             );
         } else {
+            logger::log_line(format!("startup file={} exists=false", p.display()));
             eprintln!("[Startup] file={} exists=false", p.display());
         }
     }
+    std::panic::set_hook(Box::new(|panic_info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        crate::logger::log_line(format!("panic: {}", panic_info));
+        crate::logger::log_line(format!("backtrace: {:?}", bt));
+        eprintln!("[PANIC] {}", panic_info);
+    }));
     let store = Arc::new(DataStore::new(data_dir.clone()));
     let cache_store = Arc::new(CacheStore::new(data_dir));
     let scan_state = Arc::new(Mutex::new(commands::directories::ScanState::default()));
@@ -108,13 +119,16 @@ pub fn run() {
 fn get_data_dir() -> PathBuf {
     if let Some(exe) = std::env::current_exe().ok() {
         eprintln!("[Startup] current_exe={}", exe.display());
+        logger::log_line(format!("startup current_exe={}", exe.display()));
         if let Some(dir) = exe.parent() {
             let data_dir = dir.join("data");
             std::fs::create_dir_all(&data_dir).ok();
             eprintln!("[Startup] resolved portable data_dir={}", data_dir.display());
+            logger::log_line(format!("startup resolved portable data_dir={}", data_dir.display()));
             return data_dir;
         }
     }
     eprintln!("[Startup] fallback data_dir=./data");
+    logger::log_line("startup fallback data_dir=./data");
     PathBuf::from("data")
 }
