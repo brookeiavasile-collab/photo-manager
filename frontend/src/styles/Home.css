@@ -56,7 +56,7 @@
 }
 
 .filter-top-right {
-  margin-left: auto;
+  margin-left: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -266,6 +266,12 @@
   display: block;
 }
 
+.year-label-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .year-section {
   flex: 1;
   min-width: 300px;
@@ -331,6 +337,37 @@
   color: var(--text-secondary);
 }
 
+.pagination-bar {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.pagination-top {
+  margin-top: 0;
+}
+
+.pagination-inline-right {
+  margin-top: 0;
+  margin-left: auto;
+}
+
+.pagination-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 110px;
+  text-align: center;
+}
+
+.pagination-bar .filter-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
 .scroll-top-btn {
   position: fixed;
   right: 24px;
@@ -371,6 +408,16 @@
   .filter-top-right {
     margin-left: 0;
     width: 100%;
+  }
+
+  .pagination-top {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .pagination-inline-right {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .scroll-top-btn {

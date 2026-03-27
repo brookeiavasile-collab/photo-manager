@@ -9,6 +9,7 @@ import { PhotoTypeIcon, VideoTypeIcon } from '../components/icons/AppIcons'
 import '../styles/Home.css'
 
 const STORAGE_KEY = 'media-manager-filters'
+const PAGE_SIZE = 100
 
 const loadFilters = () => {
   try {
@@ -69,6 +70,7 @@ function Home() {
   const [nextCursor, setNextCursor] = useState(null)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
   const [globalStats, setGlobalStats] = useState({ photos: 0, videos: 0 })
   const [filteredStats, setFilteredStats] = useState({ total: 0, photos: 0, videos: 0 })
   const [availableYears, setAvailableYears] = useState([])
@@ -82,10 +84,10 @@ function Home() {
   const showScrollTopRef = useRef(false)
   const tagsExpandGuardUntilRef = useRef(0)
   const viewedItemKeyRef = useRef('')
-  const loadMoreSentinelRef = useRef(null)
   const loadingMoreRef = useRef(false)
   const hasMoreRef = useRef(false)
   const nextCursorRef = useRef(null)
+  const pageCursorRef = useRef([null])
   
   const savedFilters = useMemo(() => loadFilters(), [])
   const [year, setYear] = useState(savedFilters.year ?? (savedFilters.years?.[0] ?? null))
@@ -207,9 +209,11 @@ function Home() {
       setMedia([])
       setNextCursor(null)
       setHasMore(false)
+      setCurrentPage(1)
       hasMoreRef.current = false
       nextCursorRef.current = null
-      await loadMorePage({ reset: true })
+      pageCursorRef.current = [null]
+      await loadMorePage({ page: 1, cursor: null })
       setLoading(false)
       return
     }
@@ -306,10 +310,9 @@ function Home() {
     return 'all'
   }, [selectedAiTags, mediaTypes])
 
-  const loadMorePage = useCallback(async ({ reset = false } = {}) => {
+  const loadMorePage = useCallback(async ({ page = 1, cursor = null } = {}) => {
     if (!pagingEnabled) return
     if (loadingMoreRef.current) return
-    if (!reset && !hasMoreRef.current) return
 
     loadingMoreRef.current = true
     setLoadingMore(true)
@@ -321,19 +324,21 @@ function Home() {
         sortOrder: sortOrder || 'desc',
         year: year || null,
         aiTags: selectedAiTags || [],
-        cursor: reset ? null : nextCursorRef.current,
-        limit: 2000
+        cursor,
+        limit: PAGE_SIZE
       })
 
       const items = Array.isArray(res?.items) ? res.items : []
       const normalized = items.map(normalizeMediaItem)
-      const cursor = res?.nextCursor || null
-      const more = Boolean(cursor)
+      const nextCursor = res?.nextCursor || null
+      const more = Boolean(nextCursor)
 
-      nextCursorRef.current = cursor
+      nextCursorRef.current = nextCursor
       hasMoreRef.current = more
-      setNextCursor(cursor)
+      setNextCursor(nextCursor)
       setHasMore(more)
+      setCurrentPage(page)
+      pageCursorRef.current[page] = nextCursor
       
       setFilteredStats({
         total: res?.total || 0,
@@ -348,20 +353,7 @@ function Home() {
         setAvailableAiTags(res?.availableAiTags || res?.available_ai_tags)
       }
 
-      setMedia(prev => {
-        if (reset) return normalized
-        if (normalized.length === 0) return prev
-        const seen = new Set(prev.map(it => `${it.mediaType}:${it.id}`))
-        const merged = prev.slice()
-        for (const it of normalized) {
-          const key = `${it.mediaType}:${it.id}`
-          if (!seen.has(key)) {
-            seen.add(key)
-            merged.push(it)
-          }
-        }
-        return merged
-      })
+      setMedia(normalized)
     } catch (error) {
       console.error('Failed to load media page:', error)
       setHasMore(false)
@@ -380,12 +372,16 @@ function Home() {
       const itemDate = new Date(item.dateTaken || item.createdAt)
       if (itemDate && !isNaN(itemDate.getTime())) {
         const y = itemDate.getFullYear()
-        yearCounts.set(y, (yearCounts.get(y) || 0) + 1)
+        const current = yearCounts.get(y) || { count: 0, photoCount: 0, videoCount: 0 }
+        current.count += 1
+        if (item.mediaType === 'photo') current.photoCount += 1
+        if (item.mediaType === 'video') current.videoCount += 1
+        yearCounts.set(y, current)
       }
     })
     
     return Array.from(yearCounts.entries())
-      .map(([year, count]) => ({ year, count }))
+      .map(([year, stats]) => ({ year, ...stats }))
       .sort((a, b) => b.year - a.year)
   }, [media, pagingEnabled, availableYears])
 
@@ -530,22 +526,19 @@ function Home() {
     loadMedia()
   }, [pagingEnabled, year, sortBy, sortOrder, mediaTypes, selectedAiTags])
 
-  useEffect(() => {
-    if (!pagingEnabled) return
-    const el = loadMoreSentinelRef.current
-    if (!el) return
+  const goToNextPage = async () => {
+    if (!pagingEnabled || loadingMoreRef.current || currentPage >= totalPages || !hasMoreRef.current) return
+    const nextPage = currentPage + 1
+    const cursor = pageCursorRef.current[currentPage] || null
+    await loadMorePage({ page: nextPage, cursor })
+  }
 
-    const observer = new IntersectionObserver((entries) => {
-      const entry = entries[0]
-      if (!entry) return
-      if (entry.isIntersecting) {
-        loadMorePage()
-      }
-    }, { root: null, rootMargin: '1200px 0px 1200px 0px', threshold: 0.01 })
-
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [pagingEnabled, loadMorePage])
+  const goToPrevPage = async () => {
+    if (!pagingEnabled || loadingMoreRef.current || currentPage <= 1) return
+    const prevPage = currentPage - 1
+    const cursor = pageCursorRef.current[prevPage - 1] || null
+    await loadMorePage({ page: prevPage, cursor })
+  }
 
   const handlePhotoUpdate = async (id, updates) => {
     try {
@@ -678,8 +671,31 @@ function Home() {
 
   const photoCount = globalStats.photos
   const videoCount = globalStats.videos
-  const filteredPhotoCount = filteredStats.photos
-  const filteredVideoCount = filteredStats.videos
+  const totalPages = Math.max(1, Math.ceil((filteredStats.total || 0) / PAGE_SIZE))
+
+  const renderPaginationControls = (extraClass = '') => (
+    <div className={`pagination-bar ${extraClass}`.trim()}>
+      <button
+        className="filter-btn"
+        onClick={goToPrevPage}
+        disabled={currentPage <= 1 || loadingMore}
+        type="button"
+      >
+        上一页
+      </button>
+      <span className="pagination-text">
+        第 {currentPage} / {totalPages} 页
+      </span>
+      <button
+        className="filter-btn"
+        onClick={goToNextPage}
+        disabled={currentPage >= totalPages || !hasMore || loadingMore}
+        type="button"
+      >
+        下一页
+      </button>
+    </div>
+  )
 
   if (loading) {
     return <div className="loading">加载中...</div>
@@ -745,30 +761,27 @@ function Home() {
               </div>
             </div>
 
-            <div className="filter-summary top-summary" aria-live="polite">
-              <span className="filter-summary-value">
-                共 {filteredStats.total} 项
-              </span>
-              <span className="filter-summary-detail with-icon">
-                <span className="summary-metric">
-                  <PhotoTypeIcon size={13} className="summary-icon" />
-                  <span>{filteredPhotoCount}</span>
-                </span>
-                <span className="summary-divider">·</span>
-                <span className="summary-metric">
-                  <VideoTypeIcon size={13} className="summary-icon" />
-                  <span>{filteredVideoCount}</span>
-                </span>
-              </span>
-            </div>
           </div>
+
+          {pagingEnabled && renderPaginationControls('pagination-inline-right')}
         </div>
 
         <div className="filter-row">
           <div className="filter-group">
             <label>
-              年份
-              <span className="filter-label-count">({filteredStats.total}项)</span>
+              <span className="filter-label-count">
+                总数：{filteredStats.total}
+                （
+                <span className="year-label-metric">
+                  <span>{filteredStats.photos}</span>
+                  <PhotoTypeIcon size={12} />
+                </span>
+                <span className="year-label-metric">
+                  <span>{filteredStats.videos}</span>
+                  <VideoTypeIcon size={12} />
+                </span>
+                ）
+              </span>
             </label>
             <div className="filter-buttons">
               <button
@@ -785,7 +798,7 @@ function Home() {
                   onClick={() => setYear(item.year)}
                   type="button"
                 >
-                  {item.year} ({item.count})
+                  {item.year} ({item.count ?? 0})
                 </button>
               ))}
             </div>
@@ -852,17 +865,9 @@ function Home() {
         onDuplicateClick={handleDuplicateClick}
       />
 
-      {pagingEnabled && (
-        <div
-          ref={loadMoreSentinelRef}
-          style={{ height: '1px' }}
-          aria-hidden="true"
-        />
-      )}
-
       {pagingEnabled && loadingMore && (
-        <div className="loading" style={{ marginTop: 16 }}>
-          加载更多中...
+        <div className="loading" style={{ marginTop: 8 }}>
+          分页加载中...
         </div>
       )}
 

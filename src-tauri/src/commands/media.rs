@@ -98,6 +98,8 @@ pub struct MediaPageRequest {
 pub struct YearCount {
     pub year: i32,
     pub count: usize,
+    pub photo_count: usize,
+    pub video_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,7 +392,7 @@ pub async fn get_media_page(
     let mut total_photos = 0;
     let mut total_videos = 0;
 
-    let mut all_years_count: HashMap<i32, usize> = HashMap::new();
+    let mut all_years_count: HashMap<i32, (usize, usize)> = HashMap::new();
     let mut all_tags_count: HashMap<String, usize> = HashMap::new();
 
     for p in photos {
@@ -425,7 +427,8 @@ pub async fn get_media_page(
         // For available years, we want items that match type and tags (ignoring year filter)
         if tags_match {
             if let Some(y) = p_year {
-                *all_years_count.entry(y).or_insert(0) += 1;
+                let entry = all_years_count.entry(y).or_insert((0, 0));
+                entry.0 += 1;
             }
         }
 
@@ -503,7 +506,8 @@ pub async fn get_media_page(
 
         if tags_match {
             if let Some(y) = v_year {
-                *all_years_count.entry(y).or_insert(0) += 1;
+                let entry = all_years_count.entry(y).or_insert((0, 0));
+                entry.1 += 1;
             }
         }
 
@@ -567,7 +571,12 @@ pub async fn get_media_page(
 
     let mut available_years: Vec<YearCount> = all_years_count
         .into_iter()
-        .map(|(year, count)| YearCount { year, count })
+        .map(|(year, (photo_count, video_count))| YearCount {
+            year,
+            count: photo_count + video_count,
+            photo_count,
+            video_count,
+        })
         .collect();
     available_years.sort_unstable_by(|a, b| b.year.cmp(&a.year));
 

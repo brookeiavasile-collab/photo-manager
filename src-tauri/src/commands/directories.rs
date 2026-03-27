@@ -704,7 +704,7 @@ pub async fn process_pending_geocoding(
 
     for (id, lat, lon) in pending_photos {
         if let Some(address) = geocoder.reverse_geocode(lat, lon).await {
-            cache.save_address_mem_sync(lat, lon, address.clone());
+            cache.save_address_mem(lat, lon, address.clone()).await;
             if let Some(mut photo) = store.get_photo_by_id(&id).await {
                 photo.address = Some(crate::models::Address::from(address));
                 store.update_photo(&id, photo).await;
@@ -720,7 +720,7 @@ pub async fn process_pending_geocoding(
 
     for (id, lat, lon) in pending_videos {
         if let Some(address) = geocoder.reverse_geocode(lat, lon).await {
-            cache.save_address_mem_sync(lat, lon, address.clone());
+            cache.save_address_mem(lat, lon, address.clone()).await;
             if let Some(mut video) = store.get_video_by_id(&id).await {
                 video.address = Some(crate::models::Address::from(address));
                 store.update_video(&id, video).await;

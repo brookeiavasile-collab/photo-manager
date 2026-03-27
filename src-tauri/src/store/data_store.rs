@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 
 use crate::models::{Photo, Video, Album, Tag, Config};
+use crate::logger;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Data {
@@ -354,29 +355,96 @@ impl DataStore {
         None
     }
 
+    fn parse_data_lossy(content: &str) -> Option<(Data, usize)> {
+        let root: serde_json::Value = serde_json::from_str(content).ok()?;
+        let mut data = Data::default();
+        let mut skipped = 0usize;
+
+        if let Some(items) = root.get("photos").and_then(|v| v.as_array()) {
+            for item in items {
+                match serde_json::from_value::<Photo>(item.clone()) {
+                    Ok(p) => data.photos.push(p),
+                    Err(_) => skipped += 1,
+                }
+            }
+        }
+        if let Some(items) = root.get("videos").and_then(|v| v.as_array()) {
+            for item in items {
+                match serde_json::from_value::<Video>(item.clone()) {
+                    Ok(v) => data.videos.push(v),
+                    Err(_) => skipped += 1,
+                }
+            }
+        }
+        if let Some(items) = root.get("albums").and_then(|v| v.as_array()) {
+            for item in items {
+                match serde_json::from_value::<Album>(item.clone()) {
+                    Ok(a) => data.albums.push(a),
+                    Err(_) => skipped += 1,
+                }
+            }
+        }
+        if let Some(items) = root.get("tags").and_then(|v| v.as_array()) {
+            for item in items {
+                match serde_json::from_value::<Tag>(item.clone()) {
+                    Ok(t) => data.tags.push(t),
+                    Err(_) => skipped += 1,
+                }
+            }
+        }
+        Some((data, skipped))
+    }
+
     pub async fn load(&self) {
         eprintln!("[Load] start data_dir={}", self.data_dir.display());
+        logger::log_line(format!("load start data_dir={}", self.data_dir.display()));
         let data_path = self.data_dir.join("data.json");
         let data_bak_path = self.data_dir.join("data.json.bak");
-        if let Some(data) = self
-            .read_json_with_backup::<Data>(&data_path, &data_bak_path, "data.json")
-            .await
-        {
-            let mut d = self.data.write().await;
-            *d = data;
-            eprintln!(
-                "[Load] data.json applied photos={} videos={} albums={} tags={}",
-                d.photos.len(),
-                d.videos.len(),
-                d.albums.len(),
-                d.tags.len()
-            );
-        } else {
-            eprintln!(
+        let mut loaded_data = false;
+        for (source, path) in [("primary", &data_path), ("backup", &data_bak_path)] {
+            if !path.exists() {
+                continue;
+            }
+            match tokio::fs::read_to_string(path).await {
+                Ok(content) => {
+                    if let Some((data, skipped)) = Self::parse_data_lossy(&content) {
+                        let mut d = self.data.write().await;
+                        *d = data;
+                        let msg = format!(
+                            "[Load] data.json applied from {} {} photos={} videos={} albums={} tags={} skipped={}",
+                            source,
+                            path.display(),
+                            d.photos.len(),
+                            d.videos.len(),
+                            d.albums.len(),
+                            d.tags.len(),
+                            skipped
+                        );
+                        eprintln!("{}", msg);
+                        logger::log_line(msg);
+                        loaded_data = true;
+                        break;
+                    } else {
+                        let msg = format!("[Load] failed to parse {} {}", source, path.display());
+                        eprintln!("{}", msg);
+                        logger::log_line(msg);
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("[Load] failed to read {} {} err={}", source, path.display(), e);
+                    eprintln!("{}", msg);
+                    logger::log_line(msg);
+                }
+            }
+        }
+        if !loaded_data {
+            let msg = format!(
                 "[Load] data.json unavailable at primary={} backup={}",
                 data_path.display(),
                 data_bak_path.display()
             );
+            eprintln!("{}", msg);
+            logger::log_line(msg);
         }
 
         let config_path = self.data_dir.join("config.json");
@@ -394,13 +462,26 @@ impl DataStore {
                 c.video_formats.len(),
                 c.scan_concurrency
             );
+            logger::log_line(format!(
+                "load config applied directories={} photo_formats={} video_formats={} scan_concurrency={}",
+                c.photo_directories.len(),
+                c.supported_formats.len(),
+                c.video_formats.len(),
+                c.scan_concurrency
+            ));
         } else {
             eprintln!(
                 "[Load] config.json unavailable at primary={} backup={}",
                 config_path.display(),
                 config_bak_path.display()
             );
+            logger::log_line(format!(
+                "load config unavailable primary={} backup={}",
+                config_path.display(),
+                config_bak_path.display()
+            ));
         }
         eprintln!("[Load] completed");
+        logger::log_line("load completed");
     }
 }

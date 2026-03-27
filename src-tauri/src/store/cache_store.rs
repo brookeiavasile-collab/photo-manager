@@ -94,6 +94,12 @@ impl CacheStore {
         self.save_gps_cache(&cache).await;
     }
 
+    pub async fn save_address_mem(&self, lat: f64, lon: f64, address: CachedAddress) {
+        let key = Self::make_gps_key(lat, lon);
+        let mut cache = self.gps_cache.write().await;
+        cache.entries.insert(key, address);
+    }
+
     pub async fn get_ai_tags(&self, md5: &str) -> Option<CachedAiTags> {
         self.ai_cache.read().await.entries.get(md5).cloned()
     }
