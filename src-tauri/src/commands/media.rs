@@ -1,9 +1,10 @@
 use std::sync::Arc;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::State;
 use serde::{Deserialize, Serialize};
 use crate::store::data_store::DataStore;
 use crate::models::{Photo, Video};
+use crate::logger;
 use chrono::{DateTime, Datelike, TimeZone};
 use base64::Engine;
 use std::collections::HashMap;
@@ -21,6 +22,16 @@ pub enum MediaData {
     video(Video),
 }
 
+fn normalize_thumbnail(store: &DataStore, thumb: &str) -> Option<String> {
+    let p = PathBuf::from(thumb);
+    let resolved = if p.is_absolute() { p } else { store.data_dir().join(p) };
+    if resolved.exists() {
+        Some(resolved.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub async fn get_media(store: State<'_, Arc<DataStore>>) -> Result<Vec<serde_json::Value>, String> {
     let photos = store.get_photos().await;
@@ -33,9 +44,7 @@ pub async fn get_media(store: State<'_, Arc<DataStore>>) -> Result<Vec<serde_jso
         }
         let mut p = p;
         if let Some(ref thumb) = p.thumbnail {
-            if !Path::new(thumb).exists() {
-                p.thumbnail = None;
-            }
+            p.thumbnail = normalize_thumbnail(&store, thumb);
         }
         let mut val = serde_json::to_value(&p).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("photo");
@@ -48,9 +57,9 @@ pub async fn get_media(store: State<'_, Arc<DataStore>>) -> Result<Vec<serde_jso
         }
         let mut v = v;
         if let Some(ref thumb) = v.thumbnail {
-            if !Path::new(thumb).exists() {
-                v.thumbnail = None;
-            }
+            logger::log_line(format!("thumb media list id={} raw={}", v.id, thumb));
+            v.thumbnail = normalize_thumbnail(&store, thumb);
+            logger::log_line(format!("thumb media list id={} normalized={}", v.id, v.thumbnail.as_deref().unwrap_or("<none>")));
         }
         let mut val = serde_json::to_value(&v).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("video");
@@ -450,9 +459,7 @@ pub async fn get_media_page(
 
         let mut p = p;
         if let Some(ref thumb) = p.thumbnail {
-            if !Path::new(thumb).exists() {
-                p.thumbnail = None;
-            }
+            p.thumbnail = normalize_thumbnail(&store, thumb);
         }
         let mut val = serde_json::to_value(&p).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("photo");
@@ -519,9 +526,9 @@ pub async fn get_media_page(
 
         let mut v = v;
         if let Some(ref thumb) = v.thumbnail {
-            if !Path::new(thumb).exists() {
-                v.thumbnail = None;
-            }
+            logger::log_line(format!("thumb media page id={} raw={}", v.id, thumb));
+            v.thumbnail = normalize_thumbnail(&store, thumb);
+            logger::log_line(format!("thumb media page id={} normalized={}", v.id, v.thumbnail.as_deref().unwrap_or("<none>")));
         }
         let mut val = serde_json::to_value(&v).map_err(|e| e.to_string())?;
         val["type"] = serde_json::json!("video");

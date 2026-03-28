@@ -401,6 +401,7 @@ impl DataStore {
         let data_path = self.data_dir.join("data.json");
         let data_bak_path = self.data_dir.join("data.json.bak");
         let mut loaded_data = false;
+        let mut candidates: Vec<(&str, &PathBuf, Data, usize, usize)> = Vec::new();
         for (source, path) in [("primary", &data_path), ("backup", &data_bak_path)] {
             if !path.exists() {
                 continue;
@@ -408,22 +409,20 @@ impl DataStore {
             match tokio::fs::read_to_string(path).await {
                 Ok(content) => {
                     if let Some((data, skipped)) = Self::parse_data_lossy(&content) {
-                        let mut d = self.data.write().await;
-                        *d = data;
+                        let total_count = data.photos.len() + data.videos.len() + data.albums.len() + data.tags.len();
                         let msg = format!(
-                            "[Load] data.json applied from {} {} photos={} videos={} albums={} tags={} skipped={}",
+                            "[Load] data.json candidate {} {} photos={} videos={} albums={} tags={} skipped={}",
                             source,
                             path.display(),
-                            d.photos.len(),
-                            d.videos.len(),
-                            d.albums.len(),
-                            d.tags.len(),
+                            data.photos.len(),
+                            data.videos.len(),
+                            data.albums.len(),
+                            data.tags.len(),
                             skipped
                         );
                         eprintln!("{}", msg);
                         logger::log_line(msg);
-                        loaded_data = true;
-                        break;
+                        candidates.push((source, path, data, skipped, total_count));
                     } else {
                         let msg = format!("[Load] failed to parse {} {}", source, path.display());
                         eprintln!("{}", msg);
@@ -436,6 +435,30 @@ impl DataStore {
                     logger::log_line(msg);
                 }
             }
+        }
+        if !candidates.is_empty() {
+            let mut best_index = 0usize;
+            for i in 1..candidates.len() {
+                if candidates[i].4 > candidates[best_index].4 {
+                    best_index = i;
+                }
+            }
+            let (source, path, data, skipped, _) = candidates.swap_remove(best_index);
+            let mut d = self.data.write().await;
+            *d = data;
+            let msg = format!(
+                "[Load] data.json applied from {} {} photos={} videos={} albums={} tags={} skipped={}",
+                source,
+                path.display(),
+                d.photos.len(),
+                d.videos.len(),
+                d.albums.len(),
+                d.tags.len(),
+                skipped
+            );
+            eprintln!("{}", msg);
+            logger::log_line(msg);
+            loaded_data = true;
         }
         if !loaded_data {
             let msg = format!(

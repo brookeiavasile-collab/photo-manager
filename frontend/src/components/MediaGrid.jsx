@@ -39,7 +39,7 @@ const getAddressText = (item) => {
 const getThumbnailUrl = (thumbnail) => {
   if (!thumbnail) return null
   if (isTauriApp) {
-    if (thumbnail.startsWith('/') || thumbnail.match(/^[A-Za-z]:\\/)) {
+    if (thumbnail.startsWith('/') || thumbnail.match(/^[A-Za-z]:[\\/]/) || thumbnail.startsWith('\\\\')) {
       return convertFileSrc(thumbnail)
     }
     return null
@@ -85,9 +85,22 @@ const getDisplayTitle = (item) => {
 }
 
 const MediaCard = memo(function MediaCard({ item, onItemClick, onDuplicateClick, onRequestDelete, canDelete }) {
+  const [thumbFailed, setThumbFailed] = useState(false)
   const title = getDisplayTitle(item)
   const dateText = formatDate(item.dateTaken || item.createdAt)
   const addressText = getAddressText(item)
+  const thumbSrc = !thumbFailed ? getThumbnailUrl(item.thumbnail) : null
+
+  useEffect(() => {
+    if (item.mediaType !== 'video') return
+    console.log('[thumb][video][resolve]', {
+      id: item.id,
+      filename: item.filename,
+      thumbnail: item.thumbnail || null,
+      thumbSrc,
+      thumbFailed
+    })
+  }, [item.id, item.filename, item.mediaType, item.thumbnail, thumbSrc, thumbFailed])
 
   return (
     <div
@@ -95,12 +108,23 @@ const MediaCard = memo(function MediaCard({ item, onItemClick, onDuplicateClick,
       onClick={() => onItemClick(item)}
     >
       <div className="media-thumbnail">
-        {item.thumbnail ? (
+        {item.thumbnail && thumbSrc ? (
           <img
-            src={getThumbnailUrl(item.thumbnail)}
+            src={thumbSrc}
             alt={item.filename}
             loading="lazy"
             decoding="async"
+            onLoad={() => {
+              if (item.mediaType === 'video') {
+                console.log('[thumb][video][load-ok]', { id: item.id, src: thumbSrc })
+              }
+            }}
+            onError={() => {
+              if (item.mediaType === 'video') {
+                console.log('[thumb][video][load-fail]', { id: item.id, src: thumbSrc, thumbnail: item.thumbnail || null })
+              }
+              setThumbFailed(true)
+            }}
           />
         ) : (
           <div className="no-thumbnail">

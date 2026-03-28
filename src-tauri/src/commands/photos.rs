@@ -1,9 +1,19 @@
 use std::sync::Arc;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::State;
 use crate::store::data_store::DataStore;
 use crate::models::Photo;
 use serde::Deserialize;
+
+fn normalize_thumbnail(store: &DataStore, thumb: &str) -> Option<String> {
+    let p = PathBuf::from(thumb);
+    let resolved = if p.is_absolute() { p } else { store.data_dir().join(p) };
+    if resolved.exists() {
+        Some(resolved.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,9 +31,7 @@ pub async fn get_photos(store: State<'_, Arc<DataStore>>) -> Result<Vec<Photo>, 
             .filter(|p| !p.deleted)
             .map(|mut p| {
                 if let Some(ref thumb) = p.thumbnail {
-                    if !Path::new(thumb).exists() {
-                        p.thumbnail = None;
-                    }
+                    p.thumbnail = normalize_thumbnail(&store, thumb);
                 }
                 p
             })
@@ -53,9 +61,7 @@ pub async fn get_photo(id: String, store: State<'_, Arc<DataStore>>) -> Result<O
     let mut p = store.get_photo_by_id(&id).await;
     if let Some(ref mut photo) = p {
         if let Some(ref thumb) = photo.thumbnail {
-            if !Path::new(thumb).exists() {
-                photo.thumbnail = None;
-            }
+            photo.thumbnail = normalize_thumbnail(&store, thumb);
         }
     }
     Ok(p)
@@ -90,9 +96,7 @@ pub async fn get_duplicate_photos(md5: String, store: State<'_, Arc<DataStore>>)
             .filter(|p| !p.deleted && p.md5.as_deref() == Some(&md5))
             .map(|mut p| {
                 if let Some(ref thumb) = p.thumbnail {
-                    if !Path::new(thumb).exists() {
-                        p.thumbnail = None;
-                    }
+                    p.thumbnail = normalize_thumbnail(&store, thumb);
                 }
                 p
             })

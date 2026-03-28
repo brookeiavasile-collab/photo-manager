@@ -18,10 +18,11 @@ pub fn run() {
     logger::log_line(format!("startup data_dir={}", data_dir.display()));
     eprintln!("[Startup] data_dir={}", data_dir.display());
     let data_json = data_dir.join("data.json");
+    let data_bak_json = data_dir.join("data.json.bak");
     let config_json = data_dir.join("config.json");
     let gps_cache = data_dir.join("gps_cache.json");
     let ai_cache = data_dir.join("ai_cache.json");
-    for p in [&data_json, &config_json, &gps_cache, &ai_cache] {
+    for p in [&data_json, &data_bak_json, &config_json, &gps_cache, &ai_cache] {
         if let Ok(meta) = std::fs::metadata(p) {
             logger::log_line(format!("startup file={} exists=true size={}B", p.display(), meta.len()));
             eprintln!(

@@ -1,9 +1,20 @@
 use std::sync::Arc;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::State;
 use crate::store::data_store::DataStore;
 use crate::models::Video;
+use crate::logger;
 use serde::Deserialize;
+
+fn normalize_thumbnail(store: &DataStore, thumb: &str) -> Option<String> {
+    let p = PathBuf::from(thumb);
+    let resolved = if p.is_absolute() { p } else { store.data_dir().join(p) };
+    if resolved.exists() {
+        Some(resolved.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,9 +32,9 @@ pub async fn get_videos(store: State<'_, Arc<DataStore>>) -> Result<Vec<Video>, 
             .filter(|v| !v.deleted)
             .map(|mut v| {
                 if let Some(ref thumb) = v.thumbnail {
-                    if !Path::new(thumb).exists() {
-                        v.thumbnail = None;
-                    }
+                    logger::log_line(format!("thumb video list id={} raw={}", v.id, thumb));
+                    v.thumbnail = normalize_thumbnail(&store, thumb);
+                    logger::log_line(format!("thumb video list id={} normalized={}", v.id, v.thumbnail.as_deref().unwrap_or("<none>")));
                 }
                 v
             })
@@ -53,9 +64,9 @@ pub async fn get_video(id: String, store: State<'_, Arc<DataStore>>) -> Result<O
     let mut v = store.get_video_by_id(&id).await;
     if let Some(ref mut video) = v {
         if let Some(ref thumb) = video.thumbnail {
-            if !Path::new(thumb).exists() {
-                video.thumbnail = None;
-            }
+            logger::log_line(format!("thumb video detail id={} raw={}", video.id, thumb));
+            video.thumbnail = normalize_thumbnail(&store, thumb);
+            logger::log_line(format!("thumb video detail id={} normalized={}", video.id, video.thumbnail.as_deref().unwrap_or("<none>")));
         }
     }
     Ok(v)
@@ -96,9 +107,9 @@ pub async fn get_duplicate_videos(md5: String, store: State<'_, Arc<DataStore>>)
             .filter(|v| !v.deleted && v.md5.as_deref() == Some(&md5))
             .map(|mut v| {
                 if let Some(ref thumb) = v.thumbnail {
-                    if !Path::new(thumb).exists() {
-                        v.thumbnail = None;
-                    }
+                    logger::log_line(format!("thumb video dup id={} raw={}", v.id, thumb));
+                    v.thumbnail = normalize_thumbnail(&store, thumb);
+                    logger::log_line(format!("thumb video dup id={} normalized={}", v.id, v.thumbnail.as_deref().unwrap_or("<none>")));
                 }
                 v
             })
